@@ -9,3 +9,5 @@ pdex.elf
 emsdk/
 /out
 *.blend1
+.venv
+__pycache__
