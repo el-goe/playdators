@@ -1,5 +1,4 @@
 #include "draw_style.h"
-#include "rasterizer_halfspace.h"
 #include "rasterizer_scanline.h"
 #include "util/pixel_ops.h"
 
@@ -246,87 +245,5 @@ void draw_tri_checker_scanline(uint8_t* bitmap, int rowstride, const float3* p0,
 	while (height--) {
 		draw_scanline_checker(bitmap, rowstride, &tri.grad, tri.e_left, tri.e_right);
 		raster_scanline_uv_y_step(&tri);
-	}
-}
-
-FORCE_INLINE bool do_checker(float u, float v, int x, int y)
-{
-	float uu = fract(u * 5.0f);
-	float vv = fract(v * 5.0f);
-	bool checker = (uu > 0.5f) != (vv > 0.5f);
-	//checker = true;
-
-#if DEBUG_CHECKER_RENDER
-	uint8_t* dbg = plat_gfx_get_debug_frame();
-	if (dbg)
-	{
-		int dbg_idx = (y * SCREEN_X + x) * 4;
-
-		int ui = ((int)(fract(u) * 64)) & 63;
-		int vi = ((int)(fract(v) * 64)) & 63;
-		dbg[dbg_idx + 0] += checker ? 250 : 0;
-		dbg[dbg_idx + 1] += ui * 4;
-		dbg[dbg_idx + 2] += vi * 4;
-
-		dbg[dbg_idx + 3] = 255;
-	}
-#endif
-
-	return checker;
-}
-
-void draw_tri_checker_halfspace(uint8_t* bitmap, int rowstride, const float3* p1, const float3* p2, const float3* p3, const float uvs[6])
-{
-	raster_halfspace_t hs;
-	raster_halfspace_begin(&hs, p1, p2, p3, uvs);
-
-	raster_halfspace_state_t state;
-	for (raster_halfspace_y_begin(&hs, &state); raster_halfspace_y_continue(&hs, &state); raster_halfspace_y_step(&hs, &state))
-	{
-		uint8_t* output_0 = bitmap + state.y * rowstride;
-		uint8_t* output_1 = output_0 + rowstride;
-		for (raster_halfspace_x_begin(&hs, &state); raster_halfspace_x_continue(&hs, &state); raster_halfspace_x_step(&hs, &state))
-		{
-			int inner = raster_halfspace_x_inner(&hs, &state);
-			if (inner == 1) break;
-			if (inner == 2) continue;
-
-			const int byte_idx = state.x / 8;
-			const int mask_0 = 1 << (7 - ((state.x + 0) & 7));
-			const int mask_1 = 1 << (7 - ((state.x + 1) & 7));
-
-			if (state.inside_00)
-			{
-				bool check = do_checker(state.u_00, state.v_00, state.x, state.y);
-				if (check)
-					output_0[byte_idx] &= ~mask_0;
-				else
-					output_0[byte_idx] |= mask_0;
-			}
-			if (state.inside_01)
-			{
-				bool check = do_checker(state.u_01, state.v_01, state.x + 1, state.y);
-				if (check)
-					output_0[byte_idx] &= ~mask_1;
-				else
-					output_0[byte_idx] |= mask_1;
-			}
-			if (state.inside_10)
-			{
-				bool check = do_checker(state.u_10, state.v_10, state.x, state.y + 1);
-				if (check)
-					output_1[byte_idx] &= ~mask_0;
-				else
-					output_1[byte_idx] |= mask_0;
-			}
-			if (state.inside_11)
-			{
-				bool check = do_checker(state.u_11, state.v_11, state.x + 1, state.y + 1);
-				if (check)
-					output_1[byte_idx] &= ~mask_1;
-				else
-					output_1[byte_idx] |= mask_1;
-			}
-		}
 	}
 }

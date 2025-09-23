@@ -287,10 +287,6 @@ void drawShapeFace(const Scene* scene, uint8_t* bitmap, int rowstride, const flo
 	{
 		draw_tri_checker_scanline(bitmap, rowstride, p1, p2, p3, mesh->uvs + tri_index * 6);
 	}
-	else if (style == Draw_Checker_Halfspace)
-	{
-		draw_tri_checker_halfspace(bitmap, rowstride, p1, p2, p3, mesh->uvs + tri_index * 6);
-	}
 
 	// wireframe
 	if (wire)

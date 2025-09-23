@@ -58,8 +58,6 @@ enum DrawStyle {
 	Draw_Bluenoise,
 	// 71-77ms device
 	Draw_Checker_Scanline,
-	// 75-82ms device
-	Draw_Checker_Halfspace,
 
 	Draw_Count
 };
