@@ -8,6 +8,7 @@ typedef struct Mesh {
 	int tri_count;
 	const uint16_t* tris;
 	const float* uvs; // 6x float per triangle
+	float3 center;
 } Mesh;
 
 typedef struct Scene
@@ -44,26 +45,15 @@ void scene_setLight(Scene* scene, float3 light);
 void scene_setCenter(Scene* scene, float x, float y);
 
 enum DrawStyle {
-	// 15ms ditherpattern from mini3d
-	// 19ms generic scanline rasterizer, that fills scanlines with dither pattern (but still has per-row overhead of UVs etc.)
-	// 18ms hecker raster
-	// 16ms device, cull triangles before sort
+	// Stats on animated Chocomel (sit idle): 2696 verts, 4588 tris
+
+	// 52-55ms device
 	Draw_Pattern,
-
-	// 31ms bluenoise dither, rasterizer loop from mini3
-	// 33ms bluenoise dither, generic scanline rasterizer loop (more per-row overhead)
-	// 24ms no bluenoise screen buffer; use the bluenoise thresholding directly in rasterizer
-	// 24ms hecker raster
-	// 22ms device, cull triangles before sort
+	// 58-59ms device
 	Draw_Bluenoise,
-
-	// 34ms device, 0.43ms PC, based on Chris Hecker's fx_fl_sub, write 32 pixels
-	// 31ms device, edge Y check simplifications
-	// 29ms device, cull triangles before sort
+	// 71-77ms device
 	Draw_Checker_Scanline,
-
-	// 53ms device, 0.75ms PC, halfspace
-	// 51ms device, cull triangles before sort
+	// 75-82ms device
 	Draw_Checker_Halfspace,
 
 	Draw_Count
