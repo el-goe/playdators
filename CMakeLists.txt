@@ -160,6 +160,7 @@ else()
 		TARGET ${PLAYDATE_GAME_NAME} PRE_LINK
 		COMMAND ${CMAKE_COMMAND} -E copy
 		${CMAKE_CURRENT_SOURCE_DIR}/Source/BlueNoise.tga
+		${CMAKE_CURRENT_SOURCE_DIR}/Source/chocomel_merged.pdm
         $<TARGET_FILE_DIR:${PLAYDATE_GAME_NAME}>/${DATA_DIR}
 	)
 

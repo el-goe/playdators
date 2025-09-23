@@ -317,7 +317,7 @@ static int compareFaceZ(const void* a, const void* b)
 	return 0;
 }
 
-void scene_drawMesh(Scene* scene, uint8_t* buffer, int rowstride, const Mesh* mesh, const xform* matrix, enum DrawStyle style, bool wire)
+void scene_drawMesh(Scene* scene, uint8_t* buffer, int rowstride, const Mesh* mesh, const xform* matrix, int frame, enum DrawStyle style, bool wire)
 {
 	// temporary buffers
 	if (scene->tmp_points_cap < mesh->vertex_count) {
@@ -332,8 +332,16 @@ void scene_drawMesh(Scene* scene, uint8_t* buffer, int rowstride, const Mesh* me
 	}
 
 	// transform points
+	if (frame < 0)
+		frame = 0;
+	if (frame >= mesh->vertex_frame_count)
+		frame = mesh->vertex_frame_count;
+	const float3* mesh_verts = mesh->vertices + frame * mesh->vertex_count;
 	for (int i = 0; i < mesh->vertex_count; ++i)
-		scene->tmp_points[i] = xform_transform_pt(&scene->camera, xform_transform_pt(matrix, mesh->vertices[i]));
+	{
+		scene->tmp_points[i] = xform_transform_pt(&scene->camera, xform_transform_pt(matrix, *mesh_verts));
+		++mesh_verts;
+	}
 
 	// compute face normals and midpoints
 	const uint16_t* ibPtr = mesh->tris;
@@ -415,4 +423,67 @@ void scene_drawMesh(Scene* scene, uint8_t* buffer, int rowstride, const Mesh* me
 		uint16_t idx2 = mesh->tris[fi * 3 + 2];
 		drawShapeFace(scene, buffer, rowstride, &scene->tmp_points[idx0], &scene->tmp_points[idx1], &scene->tmp_points[idx2], &scene->tmp_face_normals[fi], mesh, fi, style, wire);
 	}
+}
+
+// --------------------------------------------------------------------------
+
+Mesh* mesh_load_from_file(const char* path)
+{
+	PlatFile* f = plat_file_open_read(path);
+	if (!f)
+		return NULL;
+	typedef struct Header {
+		uint32_t magic;
+		uint32_t flags;
+		uint32_t num_verts;
+		uint32_t num_tris;
+		uint32_t num_frames;
+	} Header;
+	Header header;
+	plat_file_read(f, &header, sizeof(header));
+	if (header.magic != 0x314d4450) // PDM1
+	{
+		plat_file_close(f);
+		return NULL;
+	}
+	if (header.num_frames == 0)
+		header.num_frames = 1;
+	Mesh* mesh = plat_malloc(sizeof(Mesh));
+	mesh->vertex_count = header.num_verts;
+	mesh->vertex_frame_count = header.num_frames;
+	mesh->tri_count = header.num_tris;
+
+	mesh->tris = plat_malloc(header.num_tris * 3 * sizeof(uint16_t));
+	plat_file_read(f, mesh->tris, header.num_tris * 3 * sizeof(uint16_t));
+
+	if (header.flags & 1)
+	{
+		mesh->uvs = plat_malloc(header.num_tris * 3 * sizeof(float2));
+		plat_file_read(f, mesh->uvs, header.num_tris * 3 * sizeof(float2));
+	}
+	else
+	{
+		mesh->uvs = NULL;
+	}
+
+	mesh->vertices = plat_malloc(header.num_verts * header.num_frames * sizeof(float3));
+	plat_file_read(f, mesh->vertices, header.num_verts* header.num_frames * sizeof(float3));
+
+	mesh->center = (float3){ 0,0,0 }; //@TODO ?
+
+	plat_file_close(f);
+	return mesh;
+}
+
+void mesh_free(Mesh* mesh)
+{
+	if (!mesh)
+		return;
+	if (mesh->vertices)
+		plat_free(mesh->vertices);
+	if (mesh->uvs)
+		plat_free(mesh->uvs);
+	if (mesh->tris)
+		plat_free(mesh->tris);
+	plat_free(mesh);
 }

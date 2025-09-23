@@ -4,12 +4,16 @@
 
 typedef struct Mesh {
 	int vertex_count;
-	const float3* vertices;
+	int vertex_frame_count;
+	float3* vertices;
 	int tri_count;
-	const uint16_t* tris;
-	const float* uvs; // 6x float per triangle
+	uint16_t* tris;
+	float* uvs; // 6x float per triangle
 	float3 center;
 } Mesh;
+
+Mesh* mesh_load_from_file(const char* path);
+void mesh_free(Mesh* mesh);
 
 typedef struct Scene
 {
@@ -34,6 +38,7 @@ typedef struct Scene
 typedef struct MeshInstance {
 	const Mesh* mesh;
 	xform tr;
+	int frame;
 } MeshInstance;
 
 void drawLine(uint8_t* bitmap, int rowstride, const float3* p1, const float3* p2, int thick, const uint8_t pattern[8]);
@@ -60,4 +65,4 @@ enum DrawStyle {
 };
 
 void drawShapeFace(const Scene* scene, uint8_t* bitmap, int rowstride, const float3* p1, const float3* p2, const float3* p3, const float3* normal, const Mesh* mesh, int tri_index, enum DrawStyle style, bool wire);
-void scene_drawMesh(Scene* scene, uint8_t* buffer, int rowstride, const Mesh* mesh, const xform* matrix, enum DrawStyle style, bool wire);
+void scene_drawMesh(Scene* scene, uint8_t* buffer, int rowstride, const Mesh* mesh, const xform* matrix, int frame, enum DrawStyle style, bool wire);

@@ -10,8 +10,6 @@
 
 #include <stdlib.h>
 
-#include "gen_scene_data.h"
-
 static Scene s_scene;
 
 static bool s_draw_wire = false;
@@ -20,8 +18,7 @@ static float s_cam_dist = 2.0f;
 
 #define MAX_SCENE_OBJECT_COUNT (64)
 
-static int s_mesh_count;
-static Mesh* s_meshes;
+static Mesh* s_mesh_chocomel;
 
 static float s_object_distances[MAX_SCENE_OBJECT_COUNT];
 static int s_object_order[MAX_SCENE_OBJECT_COUNT];
@@ -31,17 +28,11 @@ static int s_object_count;
 
 static void setup_vertex_anim()
 {
-	s_mesh_count = 1;
-	s_meshes = plat_malloc(1 * sizeof(Mesh));
-	s_meshes->vertex_count = g_vertex_count;
-	s_meshes->tri_count = g_index_count / 3;
-	s_meshes->tris = g_ib;
-	s_meshes->vertices = g_positions[0];
-	s_meshes->uvs = g_uv;
-	s_meshes->center = (float3){ 0,0,0 };
+	s_mesh_chocomel = mesh_load_from_file("chocomel_merged.pdm");
 	s_object_count = 1;
-	s_objects[0].mesh = s_meshes;
+	s_objects[0].mesh = s_mesh_chocomel;
 	s_objects[0].tr = xform_identity;
+	s_objects[0].frame = 0;
 }
 
 static int CompareZ(const void* a, const void* b)
@@ -108,15 +99,15 @@ void fx_meshes_update()
 	for (int i = 0; i < s_object_count; ++i)
 	{
 		int idx = s_object_order[i];
-		scene_drawMesh(&s_scene, G.framebuffer, G.framebuffer_stride, s_objects[idx].mesh, &s_objects[idx].tr, s_draw_style, s_draw_wire);
+		scene_drawMesh(&s_scene, G.framebuffer, G.framebuffer_stride, s_objects[idx].mesh, &s_objects[idx].tr, s_objects[idx].frame, s_draw_style, s_draw_wire);
 	}
 
 	G.statval1 = s_draw_style;
 	G.statval2 = s_draw_wire ? 1 : 0;
 
 	const float cur_time = plat_time_get();
-	const int frame_idx = (int)(cur_time * 24.0f / 2.0f) % g_frame_count;
-	s_meshes->vertices = g_positions[frame_idx];
+	const int frame_idx = (int)(cur_time * 24.0f / 2.0f) % s_mesh_chocomel->vertex_frame_count;
+	s_objects[0].frame = frame_idx;
 }
 
 void fx_meshes_init()
