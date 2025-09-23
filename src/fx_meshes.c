@@ -56,12 +56,12 @@ void fx_meshes_update()
 	if (G.buttons_cur & kPlatButtonUp)
 	{
 		s_cam_dist *= 0.9f;
-		s_cam_dist = max2f(3.0f, s_cam_dist);
+		s_cam_dist = max2f(0.3f, s_cam_dist);
 	}
 	if (G.buttons_cur & kPlatButtonDown)
 	{
 		s_cam_dist *= 1.1f;
-		s_cam_dist = min2f(20.0f, s_cam_dist);
+		s_cam_dist = min2f(5.0f, s_cam_dist);
 	}
 	if (G.buttons_pressed & kPlatButtonLeft)
 	{
