@@ -1,4 +1,3 @@
-import struct
 
 bl_info = {
     "name": "Playdate Render3D format",
@@ -12,12 +11,11 @@ bl_info = {
 
 import bpy
 import os
+import numpy as np
+import struct
 from bpy.types import Operator
 from bpy.props import (BoolProperty, IntProperty)
 from bpy_extras.io_utils import ExportHelper
-
-def swizzle_vector(v):
-    return (v.x, v.z, -v.y)
 
 def get_evaluated_mesh(obj, depsgraph):
     eval_obj = obj.evaluated_get(depsgraph)
@@ -58,20 +56,21 @@ def export_file(filepath, *, visible_only=True, export_uvs=False, frame_step=1, 
     step = max(1, int(frame_step))
     frame_count = ((f1 - f0) // step) + 1
 
-    # build index buffer and vertex mapping on the first frame
+    # build index buffer, vertex mapping and bounding box on the first frame
     scene.frame_set(f0)
     bpy.context.view_layer.update()
 
     vertex_offsets = {}
     total_vertices = 0
-    tri_sources = []  # (obj, me, eval_obj, vtx_off)
+    tri_sources = []  # (obj, me, eval_obj, vtx_off, vtx_count)
 
     for o in objs:
         me, eo = get_evaluated_mesh(o, dg)
         ensure_tris(me)
         vertex_offsets[o.name_full] = total_vertices
-        tri_sources.append((o, me, eo, total_vertices))
-        total_vertices += len(me.vertices)
+        vtx_count = len(me.vertices)
+        tri_sources.append((o, me, eo, total_vertices, vtx_count))
+        total_vertices += vtx_count
 
     # check whether we have too many verts
     if total_vertices >= 0xFFFF:
@@ -83,7 +82,7 @@ def export_file(filepath, *, visible_only=True, export_uvs=False, frame_step=1, 
     unified_indices = []
     unified_uvs = []
     total_tris = 0
-    for (o, me, eo, vtx_off) in tri_sources:
+    for (o, me, eo, vtx_off, _) in tri_sources:
         uv_data = me.uv_layers.active.data if export_uvs and me.uv_layers.active else None
         loops = me.loops
         for tri in me.loop_triangles:
@@ -105,8 +104,55 @@ def export_file(filepath, *, visible_only=True, export_uvs=False, frame_step=1, 
         total_tris += len(me.loop_triangles)
 
     # clear temporary evaluated meshes
-    for (_, _, eo, _) in tri_sources:
+    for (_, _, eo, _, _) in tri_sources:
         eo.to_mesh_clear()
+
+    # swizzle matrix (x, z, -y)
+    S = np.array([[1, 0, 0],
+                  [0, 0, 1],
+                  [0, -1, 0]], dtype=np.float32)
+
+    # evaluate mesh vertex positions across frame into one large numpy array
+    P = np.empty((frame_count, total_vertices, 3), dtype=np.float32)
+    fi = 0
+    for frame in range(f0, f1 + 1, step):
+        scene.frame_set(frame)
+        bpy.context.view_layer.update()
+        for (o, _, _, off, cnt) in tri_sources:
+            me, eo = get_evaluated_mesh(o, dg)
+            ensure_tris(me)
+            # fetch vertex positions
+            v = np.empty(cnt * 3, dtype=np.float32)
+            me.vertices.foreach_get("co", v)
+            v = v.reshape(-1, 3)
+            # transform to world coordinates
+            Mw = np.array(o.matrix_world, dtype=np.float32)
+            R = Mw[:3, :3]
+            t = Mw[:3, 3]
+            w = v @ R.T + t
+            P[fi, off:off + cnt, :] = w @ S.T
+            eo.to_mesh_clear()
+        fi += 1
+
+    # calculate bounding box
+    mins = P.min(axis=(0, 1))
+    maxs = P.max(axis=(0, 1))
+    extent = np.maximum(maxs - mins, 1e-10)
+
+    # quantize positions into 11.10.11 across bounding box range
+    bits = np.array([11, 10, 11], dtype=np.int32)
+    qmax = (1 << bits) - 1
+    scale = (qmax.astype(np.float32) / extent).astype(np.float32)
+    Qf = (P - mins) * scale  # (F,V,3)
+    Q = np.rint(Qf).astype(np.int32)
+    Q[..., 0] = np.clip(Q[..., 0], 0, qmax[0])  # x
+    Q[..., 1] = np.clip(Q[..., 1], 0, qmax[1])  # y
+    Q[..., 2] = np.clip(Q[..., 2], 0, qmax[2])  # z
+
+    qx = Q[..., 0].astype(np.uint32)
+    qy = Q[..., 1].astype(np.uint32)
+    qz = Q[..., 2].astype(np.uint32)
+    packed = (qx & 0x7FF) | ((qy & 0x3FF) << 11) | ((qz & 0x7FF) << 21) # (F,V)
 
     # write file
     os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
@@ -116,6 +162,7 @@ def export_file(filepath, *, visible_only=True, export_uvs=False, frame_step=1, 
         if export_uvs:
             flags |= 1
         f.write(struct.pack("<4sIIII", b"PDM1", flags, total_vertices, total_tris, frame_count))
+        f.write(struct.pack("<6f", *(mins.tolist() + maxs.tolist())))
 
         # index buffer
         for i in unified_indices:
@@ -126,29 +173,8 @@ def export_file(filepath, *, visible_only=True, export_uvs=False, frame_step=1, 
             for uv in unified_uvs:
                 f.write(struct.pack("<f", uv))
 
-        # positions, sampled per frame
-        frame_written = 0
-        for frame in range(f0, f1 + 1, step):
-            scene.frame_set(frame)
-            bpy.context.view_layer.update()
-
-            # gather evaluated meshes in this frame
-            frame_positions = [None] * total_vertices
-            for o in objs:
-                vtx_off = vertex_offsets[o.name_full]
-                me, eo = get_evaluated_mesh(o, dg)
-                ensure_tris(me)
-                mw = o.matrix_world
-                for i, v in enumerate(me.vertices):
-                    wp = mw @ v.co
-                    x, y, z = swizzle_vector(wp)
-                    frame_positions[vtx_off + i] = (x, y, z)
-                eo.to_mesh_clear()
-
-            # write to file
-            for (x, y, z) in frame_positions:
-                f.write(struct.pack("<3f", x, y, z))
-            frame_written += 1
+        # quantized positions
+        packed.astype('<u4').tofile(f)
 
     if report:
         report({'INFO'}, f"Exported {total_vertices} verts, {total_tris} tris, {frame_count} frames -> {os.path.basename(filepath)}")

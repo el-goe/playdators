@@ -332,10 +332,18 @@ void scene_drawMesh(Scene* scene, uint8_t* buffer, int rowstride, const Mesh* me
 		frame = 0;
 	if (frame >= mesh->vertex_frame_count)
 		frame = mesh->vertex_frame_count;
-	const float3* mesh_verts = mesh->vertices + frame * mesh->vertex_count;
+	const uint32_t* mesh_verts = mesh->vertices + frame * mesh->vertex_count;
+	const float3 bbox_min = mesh->bbox_min;
+	const float3 bbox_scale = v3_mul(v3_sub(mesh->bbox_max, mesh->bbox_min), (float3) {1.0f/2047.0f, 1.0f/1023.0f, 1.0f/2047.0f});
 	for (int i = 0; i < mesh->vertex_count; ++i)
 	{
-		scene->tmp_points[i] = xform_transform_pt(&scene->camera, xform_transform_pt(matrix, *mesh_verts));
+		const uint32_t v_bits = *mesh_verts;
+		const uint32_t v_bits_x = v_bits & 2047;
+		const uint32_t v_bits_y = (v_bits >> 11) & 1023;
+		const uint32_t v_bits_z = v_bits >> 21;
+		float3 v_pos = {(float)v_bits_x, (float)v_bits_y, (float)v_bits_z};
+		v_pos = v3_add(v3_mul(v_pos, bbox_scale), bbox_min);
+		scene->tmp_points[i] = xform_transform_pt(&scene->camera, xform_transform_pt(matrix, v_pos));
 		++mesh_verts;
 	}
 
@@ -434,6 +442,8 @@ Mesh* mesh_load_from_file(const char* path)
 		uint32_t num_verts;
 		uint32_t num_tris;
 		uint32_t num_frames;
+		float3 bbox_min;
+		float3 bbox_max;
 	} Header;
 	Header header;
 	plat_file_read(f, &header, sizeof(header));
@@ -448,27 +458,40 @@ Mesh* mesh_load_from_file(const char* path)
 	mesh->vertex_count = header.num_verts;
 	mesh->vertex_frame_count = header.num_frames;
 	mesh->tri_count = header.num_tris;
+	mesh->bbox_min = header.bbox_min;
+	mesh->bbox_max = header.bbox_max;
 
-	mesh->tris = plat_malloc(header.num_tris * 3 * sizeof(uint16_t));
-	plat_file_read(f, mesh->tris, header.num_tris * 3 * sizeof(uint16_t));
+	const size_t tri_size = header.num_tris * 3 * sizeof(uint16_t);
+	mesh->tris = plat_malloc(tri_size);
+	if (plat_file_read(f, mesh->tris, tri_size) != tri_size)
+		goto _fail;
 
 	if (header.flags & 1)
 	{
-		mesh->uvs = plat_malloc(header.num_tris * 3 * sizeof(float2));
-		plat_file_read(f, mesh->uvs, header.num_tris * 3 * sizeof(float2));
+		const size_t uv_size = header.num_tris * 3 * sizeof(float2);
+		mesh->uvs = plat_malloc(uv_size);
+		if (plat_file_read(f, mesh->uvs, uv_size) != uv_size)
+			goto _fail;
 	}
 	else
 	{
 		mesh->uvs = NULL;
 	}
 
-	mesh->vertices = plat_malloc(header.num_verts * header.num_frames * sizeof(float3));
-	plat_file_read(f, mesh->vertices, header.num_verts* header.num_frames * sizeof(float3));
+	const size_t vtx_size = header.num_verts * header.num_frames * sizeof(uint32_t);
+	mesh->vertices = plat_malloc(vtx_size);
+	if (plat_file_read(f, mesh->vertices, vtx_size) != vtx_size)
+		goto _fail;
 
 	mesh->center = (float3){ 0,0,0 }; //@TODO ?
 
 	plat_file_close(f);
 	return mesh;
+
+_fail:
+	mesh_free(mesh);
+	plat_file_close(f);
+	return NULL;
 }
 
 void mesh_free(Mesh* mesh)

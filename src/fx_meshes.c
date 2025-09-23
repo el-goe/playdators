@@ -50,6 +50,9 @@ static int CompareZ(const void* a, const void* b)
 
 void fx_meshes_update()
 {
+	if (!s_mesh_chocomel)
+		return;
+
 	if (G.buttons_cur & kPlatButtonUp)
 	{
 		s_cam_dist *= 0.9f;

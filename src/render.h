@@ -5,10 +5,12 @@
 typedef struct Mesh {
 	int vertex_count;
 	int vertex_frame_count;
-	float3* vertices;
+	uint32_t* vertices; // each position is 11.10.11 bits fixed point between bbox min & max
 	int tri_count;
 	uint16_t* tris;
 	float* uvs; // 6x float per triangle
+	float3 bbox_min;
+	float3 bbox_max;
 	float3 center;
 } Mesh;
 
@@ -52,11 +54,14 @@ void scene_setCenter(Scene* scene, float x, float y);
 enum DrawStyle {
 	// Stats on animated Chocomel (sit idle): 2696 verts, 4588 tris
 
-	// 52-55ms device
+	// 52-55ms initial
+	// 50-53ms 11.10.11 fixed point positions
 	Draw_Pattern,
-	// 58-59ms device
+	// 58-59ms initial
+	// 56-59ms 11.10.11 fixed point positions
 	Draw_Bluenoise,
-	// 71-77ms device
+	// 71-77ms initial
+	// 69-75ms 11.10.11 fixed point positions
 	Draw_Checker_Scanline,
 
 	Draw_Count
