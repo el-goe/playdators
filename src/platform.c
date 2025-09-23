@@ -113,6 +113,13 @@ int plat_file_seek_cur(PlatFile* file, int pos)
 {
 	return s_pd->file->seek((SDFile*)file, pos, SEEK_CUR);
 }
+int plat_file_get_size(PlatFile* file)
+{
+	s_pd->file->seek((SDFile*)file, 0, SEEK_END);
+	int size = s_pd->file->tell((SDFile*)file);
+	s_pd->file->seek((SDFile*)file, 0, SEEK_SET);
+	return size;
+}
 void plat_file_close(PlatFile* file)
 {
 	s_pd->file->close((SDFile*)file);
@@ -435,6 +442,13 @@ int plat_file_write(PlatFile* file, const void* buf, size_t len)
 int plat_file_seek_cur(PlatFile* file, int pos)
 {
 	return fseek((FILE*)file, pos, SEEK_CUR);
+}
+int plat_file_get_size(PlatFile* file)
+{
+	fseek((FILE*)file, 0, SEEK_END);
+	int size = ftell((FILE*)file);
+	fseek((FILE*)file, 0, SEEK_SET);
+	return size;
 }
 void plat_file_close(PlatFile* file)
 {

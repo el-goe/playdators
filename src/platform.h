@@ -44,6 +44,7 @@ PlatFile* plat_file_open_write(const char* file_path);
 int plat_file_read(PlatFile* file, void* buf, size_t len);
 int plat_file_write(PlatFile* file, const void* buf, size_t len);
 int plat_file_seek_cur(PlatFile* file, int pos);
+int plat_file_get_size(PlatFile* file);
 void plat_file_close(PlatFile* file);
 
 float plat_time_get();
