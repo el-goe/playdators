@@ -62,7 +62,7 @@ enum DrawStyle {
 	Draw_Bluenoise,
 	// 71-77ms initial
 	// 69-75ms 11.10.11 fixed point positions
-	Draw_Checker_Scanline,
+	Draw_Checker,
 
 	Draw_Count
 };

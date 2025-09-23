@@ -62,7 +62,7 @@ FORCE_INLINE void draw_scanline_pattern(uint8_t* bitmap, int rowstride, const tr
 	}
 }
 
-void draw_tri_pattern_scanline(uint8_t* bitmap, int rowstride, const float3* p0, const float3* p1, const float3* p2, const uint8_t* pattern)
+void draw_tri_pattern(uint8_t* bitmap, int rowstride, const float3* p0, const float3* p1, const float3* p2, const uint8_t* pattern)
 {
 	raster_scanline_simple_t tri;
 	raster_scanline_simple_begin(&tri, p0, p1, p2);
@@ -109,7 +109,7 @@ FORCE_INLINE void draw_scanline_bluenoise(uint8_t* bitmap, int rowstride, const 
 	_drawMaskPattern(p, swap(mask), swap(color));
 }
 
-void draw_tri_bluenoise_scanline(uint8_t* bitmap, int rowstride, const float3* p0, const float3* p1, const float3* p2, const uint8_t tri_color)
+void draw_tri_bluenoise(uint8_t* bitmap, int rowstride, const float3* p0, const float3* p1, const float3* p2, const uint8_t tri_color)
 {
 	raster_scanline_simple_t tri;
 	raster_scanline_simple_begin(&tri, p0, p1, p2);
@@ -231,7 +231,7 @@ static void draw_scanline_checker(uint8_t* bitmap, int rowstride, const tri_grad
 	_drawMaskPattern(p, swap(mask), swap(color));
 }
 
-void draw_tri_checker_scanline(uint8_t* bitmap, int rowstride, const float3* p0, const float3* p1, const float3* p2, const float uvs[6])
+void draw_tri_checker(uint8_t* bitmap, int rowstride, const float3* p0, const float3* p1, const float3* p2, const float uvs[6])
 {
 	raster_scanline_uv_t tri;
 	raster_scanline_uv_begin(&tri, p0, p1, p2, uvs, 5.0f);

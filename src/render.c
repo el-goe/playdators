@@ -274,18 +274,18 @@ void drawShapeFace(const Scene* scene, uint8_t* bitmap, int rowstride, const flo
 		else if (vi < 0)
 			vi = 0;
 		const uint8_t* pattern = (const uint8_t*)&patterns[vi];
-		draw_tri_pattern_scanline(bitmap, rowstride, p1, p2, p3, pattern);
+		draw_tri_pattern(bitmap, rowstride, p1, p2, p3, pattern);
 	}
 	else if (style == Draw_Bluenoise)
 	{
 		int col = (int)(v * 255.0f);
 		if (col < 0) col = 0;
 		if (col > 255) col = 255;
-		draw_tri_bluenoise_scanline(bitmap, rowstride, p1, p2, p3, col);
+		draw_tri_bluenoise(bitmap, rowstride, p1, p2, p3, col);
 	}
-	else if (style == Draw_Checker_Scanline)
+	else if (style == Draw_Checker)
 	{
-		draw_tri_checker_scanline(bitmap, rowstride, p1, p2, p3, mesh->uvs + tri_index * 6);
+		draw_tri_checker(bitmap, rowstride, p1, p2, p3, mesh->uvs + tri_index * 6);
 	}
 
 	// wireframe
