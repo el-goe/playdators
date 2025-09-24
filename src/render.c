@@ -145,16 +145,16 @@ void scene_init(Scene* scene)
 	scene_setCenter(scene, 0.5, 0.5);
 
 	scene->tmp_points_cap = scene->tmp_faces_cap = 0;
-	scene->tmp_points = NULL;
-	scene->tmp_face_normals = NULL;
+	scene->tmp_world_points = NULL;
+	scene->tmp_proj_points = NULL;
 	scene->tmp_order_table = NULL;
 	scene->tmp_dist_table = NULL;
 }
 
 void scene_shutdown(Scene* scene)
 {
-	plat_free(scene->tmp_points);
-	plat_free(scene->tmp_face_normals);
+	plat_free(scene->tmp_world_points);
+	plat_free(scene->tmp_proj_points);
 	plat_free(scene->tmp_order_table);
 	plat_free(scene->tmp_dist_table);
 }
@@ -322,11 +322,11 @@ void scene_drawMesh(Scene* scene, uint8_t* buffer, int rowstride, const Mesh* me
 	// temporary buffers
 	if (scene->tmp_points_cap < mesh->vertex_count) {
 		scene->tmp_points_cap = mesh->vertex_count;
-		scene->tmp_points = plat_realloc(scene->tmp_points, scene->tmp_points_cap * sizeof(scene->tmp_points[0]));
+		scene->tmp_world_points = plat_realloc(scene->tmp_world_points, scene->tmp_points_cap * sizeof(scene->tmp_world_points[0]));
+		scene->tmp_proj_points = plat_realloc(scene->tmp_proj_points, scene->tmp_points_cap * sizeof(scene->tmp_proj_points[0]));
 	}
 	if (scene->tmp_faces_cap < mesh->tri_count) {
 		scene->tmp_faces_cap = mesh->tri_count;
-		scene->tmp_face_normals = plat_realloc(scene->tmp_face_normals, scene->tmp_faces_cap * sizeof(scene->tmp_face_normals[0]));
 		scene->tmp_order_table = plat_realloc(scene->tmp_order_table, scene->tmp_faces_cap * sizeof(scene->tmp_order_table[0]));
 		scene->tmp_dist_table = plat_realloc(scene->tmp_dist_table, scene->tmp_faces_cap * sizeof(scene->tmp_dist_table[0]));
 	}
@@ -347,7 +347,7 @@ void scene_drawMesh(Scene* scene, uint8_t* buffer, int rowstride, const Mesh* me
 		const uint32_t v_bits_z = v_bits >> 21;
 		float3 v_pos = {(float)v_bits_x, (float)v_bits_y, (float)v_bits_z};
 		v_pos = v3_add(v3_mul(v_pos, bbox_scale), bbox_min);
-		scene->tmp_points[i] = xform_transform_pt(&scene->camera, xform_transform_pt(matrix, v_pos));
+		scene->tmp_world_points[i] = xform_transform_pt(&scene->camera, xform_transform_pt(matrix, v_pos));
 		++mesh_verts;
 	}
 
@@ -359,21 +359,22 @@ void scene_drawMesh(Scene* scene, uint8_t* buffer, int rowstride, const Mesh* me
 		uint16_t idx1 = ibPtr[1];
 		uint16_t idx2 = ibPtr[2];
 		scene->tmp_order_table[i] = i;
-		scene->tmp_face_normals[i] = v3_tri_normal(&scene->tmp_points[idx0], &scene->tmp_points[idx1], &scene->tmp_points[idx2]);
 
-		float z = (scene->tmp_points[idx0].z + scene->tmp_points[idx1].z + scene->tmp_points[idx2].z);
+		float z = (scene->tmp_world_points[idx0].z + scene->tmp_world_points[idx1].z + scene->tmp_world_points[idx2].z);
 		scene->tmp_dist_table[i] = z;
 	}
 
 	// project points to screen
 	for (int i = 0; i < mesh->vertex_count; ++i)
 	{
-		float3* p = &scene->tmp_points[i];
+		const float3* p = &scene->tmp_world_points[i];
+		float3* pp = &scene->tmp_proj_points[i];
 		if (p->z > 0)
 		{
-			p->x = scene->scale * (p->x / p->z + 1.6666666f * scene->centerx);
-			p->y = scene->scale * (p->y / p->z + scene->centery);
+			pp->x = scene->scale * (p->x / p->z + 1.6666666f * scene->centerx);
+			pp->y = scene->scale * (p->y / p->z + scene->centery);
 		}
+		pp->z = p->z;
 	}
 
 	// backface / z / screen bounds cull triangles
@@ -384,9 +385,9 @@ void scene_drawMesh(Scene* scene, uint8_t* buffer, int rowstride, const Mesh* me
 		uint16_t idx0 = ibPtr[0];
 		uint16_t idx1 = ibPtr[1];
 		uint16_t idx2 = ibPtr[2];
-		const float3* p0 = &scene->tmp_points[idx0];
-		const float3* p1 = &scene->tmp_points[idx1];
-		const float3* p2 = &scene->tmp_points[idx2];
+		const float3* p0 = &scene->tmp_proj_points[idx0];
+		const float3* p1 = &scene->tmp_proj_points[idx1];
+		const float3* p2 = &scene->tmp_proj_points[idx2];
 
 		// If any vertex is behind the camera, skip it
 		if (p0->z <= 0 || p1->z <= 0 || p2->z <= 0)
@@ -429,7 +430,9 @@ void scene_drawMesh(Scene* scene, uint8_t* buffer, int rowstride, const Mesh* me
 		uint16_t idx0 = mesh->tris[fi * 3 + 0];
 		uint16_t idx1 = mesh->tris[fi * 3 + 1];
 		uint16_t idx2 = mesh->tris[fi * 3 + 2];
-		drawShapeFace(scene, buffer, rowstride, &scene->tmp_points[idx0], &scene->tmp_points[idx1], &scene->tmp_points[idx2], &scene->tmp_face_normals[fi], mesh, fi, style, wire);
+
+		float3 normal = v3_tri_normal(&scene->tmp_world_points[idx0], &scene->tmp_world_points[idx1], &scene->tmp_world_points[idx2]);
+		drawShapeFace(scene, buffer, rowstride, &scene->tmp_proj_points[idx0], &scene->tmp_proj_points[idx1], &scene->tmp_proj_points[idx2], &normal, mesh, fi, style, wire);
 	}
 }
 
