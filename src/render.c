@@ -343,16 +343,21 @@ void scene_drawMesh(Scene* scene, uint8_t* buffer, int rowstride, const Mesh* me
 	}
 
 	// project points to screen
+	const float scene_scale = scene->scale;
+	const float proj_add_x = 1.6666666f * scene->centerx * scene_scale;
+	const float proj_add_y = scene->centery * scene_scale;
 	for (int i = 0; i < mesh->vertex_count; ++i)
 	{
 		const float3* p = &scene->tmp_world_points[i];
 		float3* pp = &scene->tmp_proj_points[i];
-		if (p->z > 0)
+		const float pz = p->z;
+		if (pz > 0)
 		{
-			pp->x = scene->scale * (p->x / p->z + 1.6666666f * scene->centerx);
-			pp->y = scene->scale * (p->y / p->z + scene->centery);
+			const float inv_z = scene_scale / pz;
+			pp->x = p->x * inv_z + proj_add_x;
+			pp->y = p->y * inv_z + proj_add_y;
 		}
-		pp->z = p->z;
+		pp->z = pz;
 	}
 
 	// backface / z / screen bounds cull triangles
@@ -363,21 +368,22 @@ void scene_drawMesh(Scene* scene, uint8_t* buffer, int rowstride, const Mesh* me
 		uint16_t idx0 = ibPtr[0];
 		uint16_t idx1 = ibPtr[1];
 		uint16_t idx2 = ibPtr[2];
-		const float3* p0 = &scene->tmp_proj_points[idx0];
-		const float3* p1 = &scene->tmp_proj_points[idx1];
-		const float3* p2 = &scene->tmp_proj_points[idx2];
+		const float3 p0 = scene->tmp_proj_points[idx0];
+		const float3 p1 = scene->tmp_proj_points[idx1];
+		const float3 p2 = scene->tmp_proj_points[idx2];
 
 		// If any vertex is behind the camera, skip it
-		if (p0->z <= 0 || p1->z <= 0 || p2->z <= 0)
+		const int any_non_pos = (p0.z <= 0) | (p1.z <= 0) | (p2.z <= 0);
+		if (any_non_pos)
 			continue;
 
 		// quick bounds check
-		float x1 = p0->x;
-		float y1 = p0->y;
-		float x2 = p1->x;
-		float y2 = p1->y;
-		float x3 = p2->x;
-		float y3 = p2->y;
+		float x1 = p0.x;
+		float y1 = p0.y;
+		float x2 = p1.x;
+		float y2 = p1.y;
+		float x3 = p2.x;
+		float y3 = p2.y;
 		if ((x1 < 0 && x2 < 0 && x3 < 0) ||
 			(x1 >= SCREEN_X && x2 >= SCREEN_X && x3 >= SCREEN_X) ||
 			(y1 < 0 && y2 < 0 && y3 < 0) ||
