@@ -14,8 +14,12 @@ static bool s_draw_wire = false;
 static enum DrawStyle s_draw_style = Draw_Pattern;
 static float s_cam_dist = 2.0f;
 
-static Mesh* s_mesh_chocomel;
-static MeshInstance s_object_chocomel;
+#define MESH_COUNT 6
+static Mesh* s_meshes[MESH_COUNT];
+static int s_cur_mesh = 0;
+
+static MeshInstance s_object;
+
 static int s_cur_anim = 0;
 static int s_cur_anim_start = 0;
 #define ANIM_COUNT 5
@@ -30,15 +34,20 @@ static int s_anim_table[ANIM_COUNT+1] = {
 
 static void setup_vertex_anim()
 {
-	s_mesh_chocomel = mesh_load_from_file("chocomel_merged.pdm");
-	s_object_chocomel.mesh = s_mesh_chocomel;
-	s_object_chocomel.tr = xform_identity;
-	s_object_chocomel.frame = 0;
+	s_meshes[0] = mesh_load_from_file("chocomel_merged.pdm");
+	s_meshes[1] = mesh_load_from_file("boulder_007.pdm");
+	s_meshes[2] = mesh_load_from_file("bug_hotel.pdm");
+	s_meshes[3] = mesh_load_from_file("camping_table.pdm");
+	s_meshes[4] = mesh_load_from_file("snowman.pdm");
+	s_meshes[5] = mesh_load_from_file("traffic_cone.pdm");
+	s_object.mesh = s_meshes[0];
+	s_object.tr = xform_identity;
+	s_object.frame = 0;
 }
 
 void fx_meshes_update()
 {
-	if (!s_mesh_chocomel)
+	if (!s_object.mesh)
 		return;
 
 	if (G.buttons_cur & kPlatButtonUp)
@@ -63,8 +72,8 @@ void fx_meshes_update()
 		if (s_draw_style < 0 || s_draw_style >= Draw_Count)
 			s_draw_style = 0;
 	}
-	if (G.buttons_pressed & kPlatButtonA)
-		s_draw_wire = !s_draw_wire;
+	//if (G.buttons_pressed & kPlatButtonA)
+	//	s_draw_wire = !s_draw_wire;
 
 	float cangle = G.crank_angle_rad;
 	float cs = cosf(cangle);
@@ -76,13 +85,20 @@ void fx_meshes_update()
 	// draw
 	plat_gfx_clear(kSolidColorWhite);
 
-	scene_drawMesh(&s_scene, G.framebuffer, G.framebuffer_stride, s_object_chocomel.mesh, &s_object_chocomel.tr, s_object_chocomel.frame, s_draw_style, s_draw_wire);
+	scene_drawMesh(&s_scene, G.framebuffer, G.framebuffer_stride, s_object.mesh, &s_object.tr, s_object.frame, s_draw_style, s_draw_wire);
 
 	G.statval1 = s_draw_style;
 	G.statval2 = s_draw_wire ? 1 : 0;
 
 	const float cur_time = plat_time_get();
 	const int cur_frame_idx = (int)(cur_time * 24.0f / 2.0f);
+
+	if (G.buttons_pressed & kPlatButtonA)
+	{
+		s_cur_mesh++;
+		if (s_cur_mesh >= MESH_COUNT)
+			s_cur_mesh = 0;
+	}
 	if (G.buttons_pressed & kPlatButtonB)
 	{
 		s_cur_anim++;
@@ -90,9 +106,18 @@ void fx_meshes_update()
 			s_cur_anim = 0;
 		s_cur_anim_start = cur_frame_idx;
 	}
-	const int anim_frames = s_anim_table[s_cur_anim + 1] - s_anim_table[s_cur_anim];
-	const int frame = (cur_frame_idx - s_cur_anim_start) % anim_frames;
-	s_object_chocomel.frame = s_anim_table[s_cur_anim] + frame;
+
+	s_object.mesh = s_meshes[s_cur_mesh];
+	if (s_cur_mesh == 0)
+	{
+		const int anim_frames = s_anim_table[s_cur_anim + 1] - s_anim_table[s_cur_anim];
+		const int frame = (cur_frame_idx - s_cur_anim_start) % anim_frames;
+		s_object.frame = s_anim_table[s_cur_anim] + frame;
+	}
+	else
+	{
+		s_object.frame = 0;
+	}
 }
 
 void fx_meshes_init()

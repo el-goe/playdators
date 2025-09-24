@@ -162,6 +162,11 @@ else()
 		COMMAND ${CMAKE_COMMAND} -E copy
 		${CMAKE_CURRENT_SOURCE_DIR}/Source/BlueNoise.tga
 		${CMAKE_CURRENT_SOURCE_DIR}/Source/chocomel_merged.pdm
+		${CMAKE_CURRENT_SOURCE_DIR}/Source/boulder_007.pdm
+		${CMAKE_CURRENT_SOURCE_DIR}/Source/bug_hotel.pdm
+		${CMAKE_CURRENT_SOURCE_DIR}/Source/camping_table.pdm
+		${CMAKE_CURRENT_SOURCE_DIR}/Source/snowman.pdm
+		${CMAKE_CURRENT_SOURCE_DIR}/Source/traffic_cone.pdm
         $<TARGET_FILE_DIR:${PLAYDATE_GAME_NAME}>/${DATA_DIR}
 	)
 
