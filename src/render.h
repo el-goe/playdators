@@ -9,6 +9,7 @@ typedef struct Mesh {
 	int tri_count;
 	uint16_t* tris;
 	float* uvs; // 6x float per triangle
+	uint8_t* colors; // 1 byte per triangle
 	float3 bbox_min;
 	float3 bbox_max;
 	float3 center;

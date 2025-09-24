@@ -263,6 +263,10 @@ void drawShapeFace(const Scene* scene, uint8_t* bitmap, int rowstride, const flo
 	float v = v3_dot(*normal, scene->light) * 0.5f + 0.5f;
 	//v = normal->z * 0.5f + 0.5f;
 
+	if (mesh->colors) {
+		v *= mesh->colors[tri_index] * (1.0f / 255.0f);
+	}
+
 	// cheap gamma adjust
 	//v = v * v;
 
@@ -476,6 +480,18 @@ Mesh* mesh_load_from_file(const char* path)
 	else
 	{
 		mesh->uvs = NULL;
+	}
+
+	if (header.flags & 2)
+	{
+		const size_t col_size = header.num_tris * sizeof(uint8_t);
+		mesh->colors = plat_malloc(col_size);
+		if (plat_file_read(f, mesh->colors, col_size) != col_size)
+			goto _fail;
+	}
+	else
+	{
+		mesh->colors = NULL;
 	}
 
 	const size_t vtx_size = header.num_verts * header.num_frames * sizeof(uint32_t);

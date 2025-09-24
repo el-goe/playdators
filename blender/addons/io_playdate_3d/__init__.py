@@ -25,6 +25,9 @@ def get_evaluated_mesh(obj, depsgraph):
 def ensure_tris(me):
     me.calc_loop_triangles()
 
+def calc_luma(col):
+    return 0.2126 * col[0] + 0.7152 * col[1] + 0.0722 * col[2]
+
 def collect_mesh_objects(visible_only=True, view_layer=None):
     if view_layer is None:
         view_layer = bpy.context.view_layer
@@ -37,7 +40,7 @@ def collect_mesh_objects(visible_only=True, view_layer=None):
         out.append(o)
     return out
 
-def export_file(filepath, *, visible_only=True, export_uvs=False, export_anim=True, frame_step=1, use_scene_range=True, frame_start=None, frame_end=None, report=None):
+def export_file(filepath, *, visible_only=True, export_uvs=False, export_colors=False, export_anim=True, frame_step=1, use_scene_range=True, frame_start=None, frame_end=None, report=None):
     scene = bpy.context.scene
     dg = bpy.context.evaluated_depsgraph_get()
     vl = bpy.context.view_layer
@@ -82,12 +85,14 @@ def export_file(filepath, *, visible_only=True, export_uvs=False, export_anim=Tr
             report({'ERROR'}, f"Too many vertices (max 65535).")
         return {'CANCELLED'}
 
-    # build index and UV buffers
+    # build index, UV and color buffers
     unified_indices = []
     unified_uvs = []
+    unified_colors = []
     total_tris = 0
     for (o, me, eo, vtx_off, _) in tri_sources:
         uv_data = me.uv_layers.active.data if export_uvs and me.uv_layers.active else None
+        color_data = me.color_attributes.active_color.data if export_colors and me.color_attributes.active_color and me.color_attributes.active_color.domain=='CORNER' else None
         loops = me.loops
         for tri in me.loop_triangles:
             li0 = tri.loops[0]
@@ -105,6 +110,17 @@ def export_file(filepath, *, visible_only=True, export_uvs=False, export_anim=Tr
                     unified_uvs.extend([float(uv0.x), float(uv0.y), float(uv1.x), float(uv1.y), float(uv2.x), float(uv2.y)])
                 else:
                     unified_uvs.extend([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+            if export_colors:
+                if color_data:
+                    lum0 = calc_luma(color_data[li0].color)
+                    lum1 = calc_luma(color_data[li1].color)
+                    lum2 = calc_luma(color_data[li2].color)
+                    lum = (lum0 + lum1 + lum2) / 3.0
+                    lum_i = int(round(lum * 255.0))
+                    lum_i = max(0, min(255, lum_i))
+                    unified_colors.append(lum_i)
+                else:
+                    unified_colors.append(128)
         total_tris += len(me.loop_triangles)
 
     # clear temporary evaluated meshes
@@ -166,6 +182,8 @@ def export_file(filepath, *, visible_only=True, export_uvs=False, export_anim=Tr
         flags = 0
         if export_uvs:
             flags |= 1
+        if export_colors:
+            flags |= 2
         f.write(struct.pack("<4sIIII", b"PDM1", flags, total_vertices, total_tris, frame_count))
         f.write(struct.pack("<6f", *(mins.tolist() + maxs.tolist())))
 
@@ -173,10 +191,15 @@ def export_file(filepath, *, visible_only=True, export_uvs=False, export_anim=Tr
         for i in unified_indices:
             f.write(struct.pack("<H", i))
 
-        # UV buffer
+        # UVs
         if export_uvs:
             for uv in unified_uvs:
                 f.write(struct.pack("<f", uv))
+
+        # colors
+        if export_colors:
+            for col in unified_colors:
+                f.write(struct.pack("<B", col))
 
         # quantized positions
         packed.astype('<u4').tofile(f)
@@ -201,6 +224,11 @@ class EXPORT_OT_playdate_render3d(Operator, ExportHelper):
     export_uvs: BoolProperty(
         name="Export UVs",
         description="Export texture coordinates",
+        default=False
+    )
+    export_colors: BoolProperty(
+        name="Export Colors",
+        description="Export grayscale per-face colors",
         default=False
     )
     export_anim: BoolProperty(
@@ -237,6 +265,7 @@ class EXPORT_OT_playdate_render3d(Operator, ExportHelper):
         col = layout.column()
         col.prop(self, "visible_only")
         col.prop(self, "export_uvs")
+        col.prop(self, "export_colors")
         col.prop(self, "export_anim")
         if self.export_anim:
             col.prop(self, "use_scene_range")
@@ -255,6 +284,7 @@ class EXPORT_OT_playdate_render3d(Operator, ExportHelper):
             self.filepath,
             visible_only=self.visible_only,
             export_uvs=self.export_uvs,
+            export_colors=self.export_colors,
             export_anim=self.export_anim,
             frame_step=self.frame_step,
             use_scene_range=self.use_scene_range,
