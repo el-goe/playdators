@@ -71,13 +71,15 @@ void plat_gfx_draw_stats(int par1, int par2)
 		s_acc_delta_time = 0;
 		s_acc_frame_count = 0;
 	}
+	if (s_disp_delta_time < 1.0e-3f)
+		s_disp_delta_time = 1.0e-3f;
 
 	// clear rect to white
 	s_pd->graphics->fillRect(0, 0, 220, 16, kColorWhite);
 
 	// draw text
 	char* buf;
-	int bufLen = s_pd->system->formatString(&buf, "%.1fms (%.1f FPS) a:%i b:%i", (double)(s_disp_delta_time * 1000.0f), (double)(1.0f / (s_disp_delta_time + 1.0e-20f)), par1, par2);
+	int bufLen = s_pd->system->formatString(&buf, "%.1fms (%.1f FPS) a:%i b:%i", (double)(s_disp_delta_time * 1000.0f), (double)(1.0f / s_disp_delta_time), par1, par2);
 	s_pd->graphics->setFont(s_font);
 	s_pd->graphics->drawText(buf, bufLen, kASCIIEncoding, 0, 0);
 	plat_free(buf);

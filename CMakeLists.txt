@@ -64,6 +64,8 @@ set (DEMO_SOURCES
 	src/fx_meshes.h
 	src/util/pixel_ops.c
 	src/util/pixel_ops.h
+	src/util/radixsort.c
+	src/util/radixsort.h
 	src/util/image_loader.c
 	src/util/image_loader.h
 )

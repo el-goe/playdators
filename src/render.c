@@ -1,7 +1,7 @@
-#include <stdlib.h>
 #include "draw_style.h"
 #include "render.h"
 #include "platform.h"
+#include "util/radixsort.h"
 
 // Parts of the scanline rasterizer are originally based on:
 // - mini3d from Playdate SDK examples. Created by Dave Hayden on 10/20/15. Copyright © 2015 Panic, Inc. All rights reserved.
@@ -147,16 +147,16 @@ void scene_init(Scene* scene)
 	scene->tmp_points_cap = scene->tmp_faces_cap = 0;
 	scene->tmp_world_points = NULL;
 	scene->tmp_proj_points = NULL;
-	scene->tmp_order_table = NULL;
-	scene->tmp_dist_table = NULL;
+	scene->tmp_order_table1 = NULL;
+	scene->tmp_order_table2 = NULL;
 }
 
 void scene_shutdown(Scene* scene)
 {
 	plat_free(scene->tmp_world_points);
 	plat_free(scene->tmp_proj_points);
-	plat_free(scene->tmp_order_table);
-	plat_free(scene->tmp_dist_table);
+	plat_free(scene->tmp_order_table1);
+	plat_free(scene->tmp_order_table2);
 }
 
 void scene_setLight(Scene* scene, float3 light)
@@ -302,19 +302,10 @@ void drawShapeFace(const Scene* scene, uint8_t* bitmap, int rowstride, const flo
 	}
 }
 
-
-static Scene* s_facesort_instance;
-static int compareFaceZ(const void* a, const void* b)
+static inline uint32_t float_flip(uint32_t f)
 {
-	uint16_t idxa = *(const uint16_t*)a;
-	uint16_t idxb = *(const uint16_t*)b;
-	float za = s_facesort_instance->tmp_dist_table[idxa];
-	float zb = s_facesort_instance->tmp_dist_table[idxb];
-	if (za < zb)
-		return +1;
-	if (za > zb)
-		return -1;
-	return 0;
+	uint32_t mask = -((int32_t)(f >> 31)) | 0x80000000;
+	return f ^ mask;
 }
 
 void scene_drawMesh(Scene* scene, uint8_t* buffer, int rowstride, const Mesh* mesh, const xform* matrix, int frame, enum DrawStyle style, bool wire)
@@ -327,8 +318,8 @@ void scene_drawMesh(Scene* scene, uint8_t* buffer, int rowstride, const Mesh* me
 	}
 	if (scene->tmp_faces_cap < mesh->tri_count) {
 		scene->tmp_faces_cap = mesh->tri_count;
-		scene->tmp_order_table = plat_realloc(scene->tmp_order_table, scene->tmp_faces_cap * sizeof(scene->tmp_order_table[0]));
-		scene->tmp_dist_table = plat_realloc(scene->tmp_dist_table, scene->tmp_faces_cap * sizeof(scene->tmp_dist_table[0]));
+		scene->tmp_order_table1 = plat_realloc(scene->tmp_order_table1, scene->tmp_faces_cap * sizeof(scene->tmp_order_table1[0]));
+		scene->tmp_order_table2 = plat_realloc(scene->tmp_order_table2, scene->tmp_faces_cap * sizeof(scene->tmp_order_table2[0]));
 	}
 
 	// transform points
@@ -351,19 +342,6 @@ void scene_drawMesh(Scene* scene, uint8_t* buffer, int rowstride, const Mesh* me
 		++mesh_verts;
 	}
 
-	// compute face normals and midpoints
-	const uint16_t* ibPtr = mesh->tris;
-	for (int i = 0; i < mesh->tri_count; ++i, ibPtr += 3)
-	{
-		uint16_t idx0 = ibPtr[0];
-		uint16_t idx1 = ibPtr[1];
-		uint16_t idx2 = ibPtr[2];
-		scene->tmp_order_table[i] = i;
-
-		float z = (scene->tmp_world_points[idx0].z + scene->tmp_world_points[idx1].z + scene->tmp_world_points[idx2].z);
-		scene->tmp_dist_table[i] = z;
-	}
-
 	// project points to screen
 	for (int i = 0; i < mesh->vertex_count; ++i)
 	{
@@ -379,7 +357,7 @@ void scene_drawMesh(Scene* scene, uint8_t* buffer, int rowstride, const Mesh* me
 
 	// backface / z / screen bounds cull triangles
 	int vis_tri_count = 0;
-	ibPtr = mesh->tris;
+	const uint16_t *ibPtr = mesh->tris;
 	for (int i = 0; i < mesh->tri_count; ++i, ibPtr += 3)
 	{
 		uint16_t idx0 = ibPtr[0];
@@ -415,18 +393,27 @@ void scene_drawMesh(Scene* scene, uint8_t* buffer, int rowstride, const Mesh* me
 		if (d >= 0)
 			continue;
 
-		scene->tmp_order_table[vis_tri_count] = i;
+		// compute face depth midpoints
+		float z = -(scene->tmp_world_points[idx0].z + scene->tmp_world_points[idx1].z + scene->tmp_world_points[idx2].z);
+		union { float f; uint32_t u; } zbits;
+		zbits.f = z;
+		//zbits.u = float_to_half(z) << 16; //@TODO: might be better precision by putting FP16 into upper bits?
+		zbits.u = float_flip(zbits.u);
+		// put face index into lowest 16 bits
+		zbits.u = (zbits.u & 0xFFFF0000) | i;
+		scene->tmp_order_table1[vis_tri_count] = zbits.u;
+
 		++vis_tri_count;
 	}
 
 	// sort faces by z
-	s_facesort_instance = scene;
-	qsort(scene->tmp_order_table, vis_tri_count, sizeof(scene->tmp_order_table[0]), compareFaceZ);
+	radixsort_upper16keys(scene->tmp_order_table1, scene->tmp_order_table2, vis_tri_count);
+	const uint32_t* sorted_order = scene->tmp_order_table1;
 
 	// draw faces
 	for (int i = 0; i < vis_tri_count; ++i)
 	{
-		uint16_t fi = scene->tmp_order_table[i];
+		uint16_t fi = sorted_order[i] & 0xFFFF;
 		uint16_t idx0 = mesh->tris[fi * 3 + 0];
 		uint16_t idx1 = mesh->tris[fi * 3 + 1];
 		uint16_t idx2 = mesh->tris[fi * 3 + 2];

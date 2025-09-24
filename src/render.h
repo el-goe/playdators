@@ -34,8 +34,8 @@ typedef struct Scene
 	int tmp_faces_cap;
 	float3* tmp_world_points;
 	float3* tmp_proj_points;
-	uint16_t* tmp_order_table;
-	float* tmp_dist_table;
+	uint32_t* tmp_order_table1;
+	uint32_t* tmp_order_table2;
 } Scene;
 
 typedef struct MeshInstance {
@@ -58,14 +58,17 @@ enum DrawStyle {
 	// 52-55ms initial
 	// 50-53ms 11.10.11 fixed point positions
 	// 47-50ms calc tri normal after culling
+	// 37-40ms radix sort faces
 	Draw_Pattern,
 	// 58-59ms initial
 	// 56-59ms 11.10.11 fixed point positions
 	// 55-59ms calc tri normal after culling
+	// 45-49ms radix sort faces
 	Draw_Bluenoise,
 	// 71-77ms initial
 	// 69-75ms 11.10.11 fixed point positions
 	// 67-74ms calc tri normal after culling
+	// 56-62ms radix sort faces
 	Draw_Checker,
 
 	Draw_Count
