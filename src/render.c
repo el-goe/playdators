@@ -350,19 +350,33 @@ static void draw_mesh(Scene* scene, uint8_t* buffer, int rowstride, const Mesh* 
 		frame = 0;
 	if (frame >= mesh->vertex_frame_count)
 		frame = mesh->vertex_frame_count;
-	const uint32_t* mesh_verts = mesh->vertices + frame * mesh->vertex_count;
-	const float3 bbox_min = mesh->bbox_min;
-	const float3 bbox_scale = v3_mul(v3_sub(mesh->bbox_max, mesh->bbox_min), (float3) {1.0f/2047.0f, 1.0f/1023.0f, 1.0f/2047.0f});
-	for (int i = 0; i < mesh->vertex_count; ++i)
+	if ((mesh->flags & MeshFlag_FloatVertices) == 0)
 	{
-		const uint32_t v_bits = *mesh_verts;
-		const uint32_t v_bits_x = v_bits & 2047;
-		const uint32_t v_bits_y = (v_bits >> 11) & 1023;
-		const uint32_t v_bits_z = v_bits >> 21;
-		float3 v_pos = {(float)v_bits_x, (float)v_bits_y, (float)v_bits_z};
-		v_pos = v3_add(v3_mul(v_pos, bbox_scale), bbox_min);
-		scene->tmp_world_points[i] = xform_transform_pt(&scene->camera, xform_transform_pt(matrix, v_pos));
-		++mesh_verts;
+		// vertices in fixed point
+		const uint32_t* src_vtx = (const uint32_t*)mesh->vertices + frame * mesh->vertex_count;
+		const float3 bbox_min = mesh->bbox_min;
+		const float3 bbox_scale = v3_mul(v3_sub(mesh->bbox_max, mesh->bbox_min), (float3) { 1.0f / 2047.0f, 1.0f / 1023.0f, 1.0f / 2047.0f });
+		for (int i = 0; i < mesh->vertex_count; ++i)
+		{
+			const uint32_t v_bits = *src_vtx;
+			const uint32_t v_bits_x = v_bits & 2047;
+			const uint32_t v_bits_y = (v_bits >> 11) & 1023;
+			const uint32_t v_bits_z = v_bits >> 21;
+			float3 v_pos = { (float)v_bits_x, (float)v_bits_y, (float)v_bits_z };
+			v_pos = v3_add(v3_mul(v_pos, bbox_scale), bbox_min);
+			scene->tmp_world_points[i] = xform_transform_pt(&scene->camera, xform_transform_pt(matrix, v_pos));
+			++src_vtx;
+		}
+	}
+	else
+	{
+		// vertices in floating point
+		const float3* src_vtx = (const float3*)mesh->vertices + frame * mesh->vertex_count;
+		for (int i = 0; i < mesh->vertex_count; ++i)
+		{
+			scene->tmp_world_points[i] = xform_transform_pt(&scene->camera, xform_transform_pt(matrix, *src_vtx));
+			++src_vtx;
+		}
 	}
 
 	// project points to screen
@@ -514,6 +528,8 @@ Mesh* mesh_load_from_file(const char* path)
 	mesh->tri_count = header.num_tris;
 	mesh->bbox_min = header.bbox_min;
 	mesh->bbox_max = header.bbox_max;
+	mesh->center = v3_mulfl(v3_add(mesh->bbox_min, mesh->bbox_max), 0.5f);
+	mesh->flags = 0;
 
 	const size_t tri_size = header.num_tris * 3 * sizeof(uint16_t);
 	mesh->tris = plat_malloc(tri_size);
@@ -549,8 +565,6 @@ Mesh* mesh_load_from_file(const char* path)
 	if (plat_file_read(f, mesh->vertices, vtx_size) != vtx_size)
 		goto _fail;
 
-	mesh->center = (float3){ 0,0,0 }; //@TODO ?
-
 	plat_file_close(f);
 	return mesh;
 
@@ -558,6 +572,34 @@ _fail:
 	mesh_free(mesh);
 	plat_file_close(f);
 	return NULL;
+}
+
+Mesh* mesh_create(int vertex_count, int frame_count, int tri_count, bool uvs, bool colors)
+{
+	if (frame_count < 1)
+		frame_count = 1;
+	Mesh* mesh = plat_malloc(sizeof(Mesh));
+	mesh->vertex_count = vertex_count;
+	mesh->vertex_frame_count = frame_count;
+	mesh->tri_count = tri_count;
+	mesh->bbox_min = (float3){ 0,0,0 };
+	mesh->bbox_max = (float3){ 0,0,0 };
+	mesh->center = (float3){ 0,0,0 };
+	mesh->flags = MeshFlag_FloatVertices;
+
+	mesh->tris = plat_malloc(mesh->tri_count * 3 * sizeof(uint16_t));
+	if (uvs)
+		mesh->uvs = plat_malloc(mesh->tri_count * 3 * sizeof(float2));
+	else
+		mesh->uvs = NULL;
+
+	if (colors)
+		mesh->colors = plat_malloc(mesh->tri_count * sizeof(uint8_t));
+	else
+		mesh->colors = NULL;
+
+	mesh->vertices = plat_malloc(mesh->vertex_count * mesh->vertex_frame_count * sizeof(float3));
+	return mesh;
 }
 
 void mesh_free(Mesh* mesh)

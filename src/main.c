@@ -14,7 +14,7 @@ static bool s_draw_wire = false;
 static enum DrawStyle s_draw_style = Draw_Pattern;
 static float s_cam_dist = 2.0f;
 
-#define MESH_COUNT 6
+#define MESH_COUNT 7
 static Mesh* s_meshes[MESH_COUNT];
 
 static MeshInstance s_objects[MESH_COUNT];
@@ -63,6 +63,39 @@ static void create_mesh_objects()
 	s_objects[5].mesh = s_meshes[5];
 	s_objects[5].tr = xform_make_translate(-0.5f, 0.0f, 1.0f);
 	s_objects[5].frame = 0;
+
+	{
+		// procedural grid
+		int grid = 4;
+		Mesh* m = mesh_create((grid + 1) * (grid + 1), 1, grid * grid * 2, false, true);
+		float3* dst = (float3*)m->vertices;
+		for (int ty = 0; ty < grid + 1; ty++) {
+			for (int tx = 0; tx < grid + 1; tx++) {
+				dst->x = tx - grid * 0.5f;
+				dst->y = 0.0f;
+				dst->z = ty - grid * 0.5f;
+				dst++;
+			}
+		}
+		for (int ty = 0; ty < grid; ++ty) {
+			for (int tx = 0; tx < grid; ++tx) {
+				int qidx = ty * grid + tx;
+				int base = ty * (grid+1) + tx;
+				m->tris[qidx * 6 + 0] = base;
+				m->tris[qidx * 6 + 1] = base + grid + 1 + 1;
+				m->tris[qidx * 6 + 2] = base + 1;
+				m->tris[qidx * 6 + 3] = base;
+				m->tris[qidx * 6 + 4] = base + grid + 1;
+				m->tris[qidx * 6 + 5] = base + grid + 1 + 1;
+				m->colors[qidx * 2 + 0] = m->colors[qidx * 2 + 1] = ((ty ^ tx) & 1) ? 192 : 64;
+			}
+		}
+		s_meshes[6] = m;
+		s_objects[6].mesh = m;
+		s_objects[6].tr = xform_make_translate(0.0f, 0.0f, 0.0f);
+		s_objects[6].frame = 0;
+	}
+
 
 	for (int i = 0; i < MESH_COUNT; ++i)
 		scene_add_mesh(&s_scene, &s_objects[i]);

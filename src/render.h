@@ -2,10 +2,14 @@
 
 #include "mathlib.h"
 
+enum MeshFlags {
+	MeshFlag_FloatVertices = (1 << 0)
+};
+
 typedef struct Mesh {
 	int vertex_count;
 	int vertex_frame_count;
-	uint32_t* vertices; // each position is 11.10.11 bits fixed point between bbox min & max
+	void* vertices; // each position is either: uint32_t (11.10.11 bits fixed point between bbox min & max), or just regular float3 depending on flags
 	int tri_count;
 	uint16_t* tris;
 	float* uvs; // 6x float per triangle
@@ -13,9 +17,11 @@ typedef struct Mesh {
 	float3 bbox_min;
 	float3 bbox_max;
 	float3 center;
+	uint32_t flags; // MeshFlags
 } Mesh;
 
 Mesh* mesh_load_from_file(const char* path);
+Mesh* mesh_create(int vertex_count, int frame_count, int tri_count, bool uvs, bool colors);
 void mesh_free(Mesh* mesh);
 
 typedef struct MeshInstance {
