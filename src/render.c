@@ -144,11 +144,17 @@ void scene_init(Scene* scene)
 
 	scene_setCenter(scene, 0.5, 0.5);
 
-	scene->tmp_points_cap = scene->tmp_faces_cap = 0;
+	scene->tmp_points_cap = 0;
 	scene->tmp_world_points = NULL;
 	scene->tmp_proj_points = NULL;
+	scene->order_cap = 0;
 	scene->tmp_order_table1 = NULL;
 	scene->tmp_order_table2 = NULL;
+	scene->inst_count = 0;
+	scene->inst_cap = 0;
+	scene->instances = NULL;
+	scene->tmp_inst_order_table1 = NULL;
+	scene->tmp_inst_order_table2 = NULL;
 }
 
 void scene_shutdown(Scene* scene)
@@ -157,6 +163,9 @@ void scene_shutdown(Scene* scene)
 	plat_free(scene->tmp_proj_points);
 	plat_free(scene->tmp_order_table1);
 	plat_free(scene->tmp_order_table2);
+	plat_free(scene->instances);
+	plat_free(scene->tmp_inst_order_table1);
+	plat_free(scene->tmp_inst_order_table2);
 }
 
 void scene_setLight(Scene* scene, float3 light)
@@ -309,7 +318,18 @@ static inline uint32_t float_flip(uint32_t f)
 	return f ^ mask;
 }
 
-void scene_drawMesh(Scene* scene, uint8_t* buffer, int rowstride, const Mesh* mesh, const xform* matrix, int frame, enum DrawStyle style, bool wire)
+static inline uint32_t pack_depth_index(float z, uint32_t index)
+{
+	union { float f; uint32_t u; } bits;
+	bits.f = z;
+	//bits.u = float_to_half(z) << 16; //@TODO: might be better precision by putting FP16 into upper bits?
+	bits.u = float_flip(bits.u);
+	// put index into lowest 16 bits
+	bits.u = (bits.u & 0xFFFF0000) | index;
+	return bits.u;
+}
+
+static void draw_mesh(Scene* scene, uint8_t* buffer, int rowstride, const Mesh* mesh, const xform* matrix, int frame, enum DrawStyle style, bool wire)
 {
 	// temporary buffers
 	if (scene->tmp_points_cap < mesh->vertex_count) {
@@ -317,10 +337,12 @@ void scene_drawMesh(Scene* scene, uint8_t* buffer, int rowstride, const Mesh* me
 		scene->tmp_world_points = plat_realloc(scene->tmp_world_points, scene->tmp_points_cap * sizeof(scene->tmp_world_points[0]));
 		scene->tmp_proj_points = plat_realloc(scene->tmp_proj_points, scene->tmp_points_cap * sizeof(scene->tmp_proj_points[0]));
 	}
-	if (scene->tmp_faces_cap < mesh->tri_count) {
-		scene->tmp_faces_cap = mesh->tri_count;
-		scene->tmp_order_table1 = plat_realloc(scene->tmp_order_table1, scene->tmp_faces_cap * sizeof(scene->tmp_order_table1[0]));
-		scene->tmp_order_table2 = plat_realloc(scene->tmp_order_table2, scene->tmp_faces_cap * sizeof(scene->tmp_order_table2[0]));
+	if (scene->order_cap < mesh->tri_count) {
+		scene->order_cap = mesh->tri_count;
+		plat_free(scene->tmp_order_table1);
+		plat_free(scene->tmp_order_table2);
+		scene->tmp_order_table1 = plat_malloc(scene->order_cap * sizeof(scene->tmp_order_table1[0]));
+		scene->tmp_order_table2 = plat_malloc(scene->order_cap * sizeof(scene->tmp_order_table2[0]));
 	}
 
 	// transform points
@@ -402,13 +424,7 @@ void scene_drawMesh(Scene* scene, uint8_t* buffer, int rowstride, const Mesh* me
 
 		// compute face depth midpoints
 		float z = -(scene->tmp_world_points[idx0].z + scene->tmp_world_points[idx1].z + scene->tmp_world_points[idx2].z);
-		union { float f; uint32_t u; } zbits;
-		zbits.f = z;
-		//zbits.u = float_to_half(z) << 16; //@TODO: might be better precision by putting FP16 into upper bits?
-		zbits.u = float_flip(zbits.u);
-		// put face index into lowest 16 bits
-		zbits.u = (zbits.u & 0xFFFF0000) | i;
-		scene->tmp_order_table1[vis_tri_count] = zbits.u;
+		scene->tmp_order_table1[vis_tri_count] = pack_depth_index(z, i);
 
 		++vis_tri_count;
 	}
@@ -427,6 +443,43 @@ void scene_drawMesh(Scene* scene, uint8_t* buffer, int rowstride, const Mesh* me
 
 		float3 normal = v3_tri_normal(&scene->tmp_world_points[idx0], &scene->tmp_world_points[idx1], &scene->tmp_world_points[idx2]);
 		drawShapeFace(scene, buffer, rowstride, &scene->tmp_proj_points[idx0], &scene->tmp_proj_points[idx1], &scene->tmp_proj_points[idx2], &normal, mesh, fi, style, wire);
+	}
+}
+
+void scene_add_mesh(Scene* scene, const MeshInstance* inst)
+{
+	if (scene->inst_count + 1 > scene->inst_cap) {
+		scene->inst_cap = scene->inst_count + 32;
+		scene->instances = plat_realloc(scene->instances, scene->inst_cap * sizeof(scene->instances[0]));
+		plat_free(scene->tmp_inst_order_table1);
+		plat_free(scene->tmp_inst_order_table2);
+		scene->tmp_inst_order_table1 = plat_malloc(scene->inst_cap * sizeof(scene->tmp_inst_order_table1[0]));
+		scene->tmp_inst_order_table2 = plat_malloc(scene->inst_cap * sizeof(scene->tmp_inst_order_table2[0]));
+
+	}
+	scene->instances[scene->inst_count] = inst;
+	scene->inst_count++;
+}
+
+void scene_draw(Scene* scene, uint8_t* buffer, int rowstride, enum DrawStyle style, bool wire)
+{
+	// sort objects by distance
+	const MeshInstance** inst = scene->instances;
+	for (int i = 0; i < scene->inst_count; ++i, ++inst)
+	{
+		const Mesh* mesh = (*inst)->mesh;
+		float3 center_local = xform_transform_pt(&(*inst)->tr, mesh->center);
+		float3 center = xform_transform_pt(&scene->camera, center_local);
+		scene->tmp_inst_order_table1[i] = pack_depth_index(-center.z, i);
+	}
+	radixsort_upper16keys(scene->tmp_inst_order_table1, scene->tmp_inst_order_table2, scene->inst_count);
+
+	// draw meshes in the sorted order
+	for (int i = 0; i < scene->inst_count; ++i)
+	{
+		uint16_t index = scene->tmp_inst_order_table1[i] & 0xFFFF;
+		const MeshInstance* inst = scene->instances[index];
+		draw_mesh(scene, buffer, rowstride, inst->mesh, &inst->tr, inst->frame, style, wire);
 	}
 }
 

@@ -18,6 +18,12 @@ typedef struct Mesh {
 Mesh* mesh_load_from_file(const char* path);
 void mesh_free(Mesh* mesh);
 
+typedef struct MeshInstance {
+	const Mesh* mesh;
+	xform tr;
+	int frame;
+} MeshInstance;
+
 typedef struct Scene
 {
 	xform camera;
@@ -31,18 +37,19 @@ typedef struct Scene
 	float scale;
 
 	int tmp_points_cap;
-	int tmp_faces_cap;
 	float3* tmp_world_points;
 	float3* tmp_proj_points;
+
+	int order_cap;
 	uint32_t* tmp_order_table1;
 	uint32_t* tmp_order_table2;
-} Scene;
 
-typedef struct MeshInstance {
-	const Mesh* mesh;
-	xform tr;
-	int frame;
-} MeshInstance;
+	int inst_count;
+	int inst_cap;
+	const MeshInstance** instances;
+	uint32_t* tmp_inst_order_table1;
+	uint32_t* tmp_inst_order_table2;
+} Scene;
 
 void drawLine(uint8_t* bitmap, int rowstride, const float3* p1, const float3* p2, int thick, const uint8_t pattern[8]);
 
@@ -74,5 +81,5 @@ enum DrawStyle {
 	Draw_Count
 };
 
-void drawShapeFace(const Scene* scene, uint8_t* bitmap, int rowstride, const float3* p1, const float3* p2, const float3* p3, const float3* normal, const Mesh* mesh, int tri_index, enum DrawStyle style, bool wire);
-void scene_drawMesh(Scene* scene, uint8_t* buffer, int rowstride, const Mesh* mesh, const xform* matrix, int frame, enum DrawStyle style, bool wire);
+void scene_add_mesh(Scene* scene, const MeshInstance* inst);
+void scene_draw(Scene* scene, uint8_t* buffer, int rowstride, enum DrawStyle style, bool wire);
