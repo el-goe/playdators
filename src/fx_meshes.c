@@ -8,44 +8,32 @@
 
 #include "fx_meshes.h"
 
-#include <stdlib.h>
-
 static Scene s_scene;
 
 static bool s_draw_wire = false;
 static enum DrawStyle s_draw_style = Draw_Pattern;
 static float s_cam_dist = 2.0f;
 
-#define MAX_SCENE_OBJECT_COUNT (64)
-
 static Mesh* s_mesh_chocomel;
-
-static float s_object_distances[MAX_SCENE_OBJECT_COUNT];
-static int s_object_order[MAX_SCENE_OBJECT_COUNT];
-
-static MeshInstance s_objects[MAX_SCENE_OBJECT_COUNT];
-static int s_object_count;
+static MeshInstance s_object_chocomel;
+static int s_cur_anim = 0;
+static int s_cur_anim_start = 0;
+#define ANIM_COUNT 5
+static int s_anim_table[ANIM_COUNT+1] = {
+	0, // idle sitting
+	54, // idle
+	60, // walk
+	72, // trot
+	80, // dig
+	110,
+};
 
 static void setup_vertex_anim()
 {
 	s_mesh_chocomel = mesh_load_from_file("chocomel_merged.pdm");
-	s_object_count = 1;
-	s_objects[0].mesh = s_mesh_chocomel;
-	s_objects[0].tr = xform_identity;
-	s_objects[0].frame = 0;
-}
-
-static int CompareZ(const void* a, const void* b)
-{
-	int ia = *(const int*)a;
-	int ib = *(const int*)b;
-	float za = s_object_distances[ia];
-	float zb = s_object_distances[ib];
-	if (za < zb)
-		return +1;
-	if (za > zb)
-		return -1;
-	return 0;
+	s_object_chocomel.mesh = s_mesh_chocomel;
+	s_object_chocomel.tr = xform_identity;
+	s_object_chocomel.frame = 0;
 }
 
 void fx_meshes_update()
@@ -85,32 +73,26 @@ void fx_meshes_update()
 		cs * s_cam_dist, 1.0f, ss * s_cam_dist
 	}, (float3) { 0, 0.5f, 0 }, 1.0f, (float3) { 0, -1, 0 });
 
-	// sort the objects
-	for (int i = 0; i < s_object_count; ++i)
-	{
-		const Mesh* mesh = s_objects[i].mesh;
-		float3 center_local = xform_transform_pt(&s_objects[i].tr, mesh->center);
-		float3 center = xform_transform_pt(&s_scene.camera, center_local);
-		s_object_distances[i] = center.z;
-		s_object_order[i] = i;
-	}
-	qsort(s_object_order, s_object_count, sizeof(s_object_order[0]), CompareZ);
-
 	// draw
 	plat_gfx_clear(kSolidColorWhite);
 
-	for (int i = 0; i < s_object_count; ++i)
-	{
-		int idx = s_object_order[i];
-		scene_drawMesh(&s_scene, G.framebuffer, G.framebuffer_stride, s_objects[idx].mesh, &s_objects[idx].tr, s_objects[idx].frame, s_draw_style, s_draw_wire);
-	}
+	scene_drawMesh(&s_scene, G.framebuffer, G.framebuffer_stride, s_object_chocomel.mesh, &s_object_chocomel.tr, s_object_chocomel.frame, s_draw_style, s_draw_wire);
 
 	G.statval1 = s_draw_style;
 	G.statval2 = s_draw_wire ? 1 : 0;
 
 	const float cur_time = plat_time_get();
-	const int frame_idx = (int)(cur_time * 24.0f / 2.0f) % s_mesh_chocomel->vertex_frame_count;
-	s_objects[0].frame = frame_idx;
+	const int cur_frame_idx = (int)(cur_time * 24.0f / 2.0f);
+	if (G.buttons_pressed & kPlatButtonB)
+	{
+		s_cur_anim++;
+		if (s_cur_anim >= ANIM_COUNT)
+			s_cur_anim = 0;
+		s_cur_anim_start = cur_frame_idx;
+	}
+	const int anim_frames = s_anim_table[s_cur_anim + 1] - s_anim_table[s_cur_anim];
+	const int frame = (cur_frame_idx - s_cur_anim_start) % anim_frames;
+	s_object_chocomel.frame = s_anim_table[s_cur_anim] + frame;
 }
 
 void fx_meshes_init()

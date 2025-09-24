@@ -289,7 +289,8 @@ void drawShapeFace(const Scene* scene, uint8_t* bitmap, int rowstride, const flo
 	}
 	else if (style == Draw_Checker)
 	{
-		draw_tri_checker(bitmap, rowstride, p1, p2, p3, mesh->uvs + tri_index * 6);
+		static float dummy_uvs[6] = {0.0f, 0.0f, 0.2f, 0.0f, 0.0f, 0.2f};
+		draw_tri_checker(bitmap, rowstride, p1, p2, p3, mesh->uvs ? mesh->uvs + tri_index * 6 : dummy_uvs);
 	}
 
 	// wireframe
