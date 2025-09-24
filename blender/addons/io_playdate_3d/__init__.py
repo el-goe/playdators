@@ -37,7 +37,7 @@ def collect_mesh_objects(visible_only=True, view_layer=None):
         out.append(o)
     return out
 
-def export_file(filepath, *, visible_only=True, export_uvs=False, frame_step=1, use_scene_range=True, frame_start=None, frame_end=None, report=None):
+def export_file(filepath, *, visible_only=True, export_uvs=False, export_anim=True, frame_step=1, use_scene_range=True, frame_start=None, frame_end=None, report=None):
     scene = bpy.context.scene
     dg = bpy.context.evaluated_depsgraph_get()
     vl = bpy.context.view_layer
@@ -55,10 +55,14 @@ def export_file(filepath, *, visible_only=True, export_uvs=False, frame_step=1, 
         f1 = frame_end   if frame_end   is not None else scene.frame_end
     step = max(1, int(frame_step))
     frame_count = ((f1 - f0) // step) + 1
+    if not export_anim:
+        f1 = f0
+        frame_count = 1
 
     # build index buffer, vertex mapping and bounding box on the first frame
-    scene.frame_set(f0)
-    bpy.context.view_layer.update()
+    if export_anim:
+        scene.frame_set(f0)
+        bpy.context.view_layer.update()
 
     vertex_offsets = {}
     total_vertices = 0
@@ -116,8 +120,9 @@ def export_file(filepath, *, visible_only=True, export_uvs=False, frame_step=1, 
     P = np.empty((frame_count, total_vertices, 3), dtype=np.float32)
     fi = 0
     for frame in range(f0, f1 + 1, step):
-        scene.frame_set(frame)
-        bpy.context.view_layer.update()
+        if export_anim:
+            scene.frame_set(frame)
+            bpy.context.view_layer.update()
         for (o, _, _, off, cnt) in tri_sources:
             me, eo = get_evaluated_mesh(o, dg)
             ensure_tris(me)
@@ -198,6 +203,11 @@ class EXPORT_OT_playdate_render3d(Operator, ExportHelper):
         description="Export texture coordinates",
         default=False
     )
+    export_anim: BoolProperty(
+        name="Animation",
+        description="Export animated vertex positions",
+        default=True
+    )
     use_scene_range: BoolProperty(
         name="Use Scene Frame Range",
         description="Export frames from scene start/end",
@@ -227,12 +237,14 @@ class EXPORT_OT_playdate_render3d(Operator, ExportHelper):
         col = layout.column()
         col.prop(self, "visible_only")
         col.prop(self, "export_uvs")
-        col.prop(self, "use_scene_range")
-        if not self.use_scene_range:
-            row = col.row(align=True)
-            row.prop(self, "frame_start")
-            row.prop(self, "frame_end")
-        col.prop(self, "frame_step")
+        col.prop(self, "export_anim")
+        if self.export_anim:
+            col.prop(self, "use_scene_range")
+            if not self.use_scene_range:
+                row = col.row(align=True)
+                row.prop(self, "frame_start")
+                row.prop(self, "frame_end")
+            col.prop(self, "frame_step")
 
     def execute(self, context):
         if not self.use_scene_range and self.frame_end < self.frame_start:
@@ -243,6 +255,7 @@ class EXPORT_OT_playdate_render3d(Operator, ExportHelper):
             self.filepath,
             visible_only=self.visible_only,
             export_uvs=self.export_uvs,
+            export_anim=self.export_anim,
             frame_step=self.frame_step,
             use_scene_range=self.use_scene_range,
             frame_start=self.frame_start,
