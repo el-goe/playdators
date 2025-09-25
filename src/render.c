@@ -182,34 +182,8 @@ void scene_setCenter(Scene* scene, float x, float y)
 void scene_setCamera(Scene* scene, float3 origin, float3 lookAt, float scale, float3 up)
 {
 	scene->scale = 240 * scale;
-
-	// calculate forward vector
-	float3 fw = v3_sub(lookAt, origin);
-	if (v3_lensq(&fw) < 1.0e-6f)
-		fw = f3(1, 0, 0);
-	else
-		fw = v3_normalize(fw);
-	// calculate right vector
-	float3 rt = v3_cross(up, fw);
-	// up is nearly parallel to forward, pick a different "up"
-	if (v3_lensq(&rt) < 1.0e-6f) {
-		up = fabsf(fw.y) < 0.99f ? f3(0, 1, 0) : f3(1, 0, 0);
-		rt = v3_cross(up, fw);
-	}
-	rt = v3_normalize(rt);
-	// calculate final up
-	up = v3_cross(fw, rt);
-
-	xform x;
-	// rotation matrix, transposed since we need view matrix
-	x.m[0][0] = rt.x; x.m[0][1] = rt.y; x.m[0][2] = rt.z;
-	x.m[1][0] = up.x; x.m[1][1] = up.y; x.m[1][2] = up.z;
-	x.m[2][0] = fw.x; x.m[2][1] = fw.y; x.m[2][2] = fw.z;
-	// origin, again transformed since we need view matrix
-	x.x = -v3_dot(rt, origin);
-	x.y = -v3_dot(up, origin);
-	x.z = -v3_dot(fw, origin);
-	scene->camera = x;
+	xform m = xform_look_at(origin, lookAt, up);
+	scene->camera = xform_invert(&m);
 }
 
 typedef uint8_t Pattern[8];
@@ -567,9 +541,9 @@ Mesh* mesh_create(int vertex_count, int frame_count, int tri_count, bool uvs, bo
 	mesh->vertex_count = vertex_count;
 	mesh->vertex_frame_count = frame_count;
 	mesh->tri_count = tri_count;
-	mesh->bbox_min = (float3){ 0,0,0 };
-	mesh->bbox_max = (float3){ 0,0,0 };
-	mesh->center = (float3){ 0,0,0 };
+	mesh->bbox_min = f3(0,0,0);
+	mesh->bbox_max = f3(0,0,0);
+	mesh->center = f3(0,0,0);
 	mesh->flags = MeshFlag_FloatVertices;
 
 	mesh->tris = plat_malloc(mesh->tri_count * 3 * sizeof(uint16_t));

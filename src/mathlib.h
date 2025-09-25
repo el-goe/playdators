@@ -322,16 +322,16 @@ float3 v3_tri_normal(const float3* p1, const float3* p2, const float3* p3);
 
 typedef struct xform
 {
-	float x;
-	float y;
-	float z;
-	float m[3][3];
+	float3 pos;
+	float3 ax, ay, az;
 } xform;
 extern xform xform_identity;
-xform xform_make(float m11, float m12, float m13, float m21, float m22, float m23, float m31, float m32, float m33);
-xform xform_axes(float3 ax, float3 ay, float3 az, float3 pos);
+xform xform_make(float xx, float xy, float xz, float yx, float yy, float yz, float zx, float zy, float zz);
+xform xform_axes(float3 x, float3 y, float3 z, float3 pos);
 xform xform_make_translate(float dx, float dy, float dz);
 xform xform_make_axis_angle(float angle, float3 axis);
 xform xform_multiply(const xform* l, const xform* r);
 float3 xform_transform_pt(const xform* m, float3 p);
 float xform_get_determinant(xform* m);
+xform xform_look_at(float3 pos, float3 target, float3 up);
+xform xform_invert(const xform* m);

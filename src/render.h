@@ -32,7 +32,7 @@ typedef struct MeshInstance {
 
 typedef struct Scene
 {
-	xform camera;
+	xform camera; // note: this is "view matrix" i.e. inverse of camera's world transform
 	float3 light;
 
 	// location of the Z vanishing point on the screen. (0,0) is top left corner, (1,1) is bottom right. Defaults to (0.5,0.5)
