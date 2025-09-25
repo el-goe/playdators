@@ -259,6 +259,10 @@ static inline float3 v3_normalize(float3 v)
 	return r;
 }
 
+static inline float3 v3_neg(float3 v)
+{
+	return f3(-v.x, -v.y, -v.z);
+}
 
 static inline float v3_lensq(float3* v)
 {

@@ -181,50 +181,35 @@ void scene_setCenter(Scene* scene, float x, float y)
 
 void scene_setCamera(Scene* scene, float3 origin, float3 lookAt, float scale, float3 up)
 {
-	xform camera = xform_identity;
-
-	camera.x = -origin.x;
-	camera.y = -origin.y;
-	camera.z = -origin.z;
-
-	float3 dir = (float3){ lookAt.x - origin.x, lookAt.y - origin.y, lookAt.z - origin.z };
-
-	float l = sqrtf(v3_lensq(&dir));
-
-	dir.x /= l;
-	dir.y /= l;
-	dir.z /= l;
-
 	scene->scale = 240 * scale;
 
-	// first yaw around the y axis
-
-	float h = 0;
-
-	if (dir.x != 0 || dir.z != 0)
-	{
-		h = sqrtf(dir.x * dir.x + dir.z * dir.z);
-
-		xform yaw = xform_make(dir.z / h, 0, -dir.x / h, 0, 1, 0, dir.x / h, 0, dir.z / h);
-		camera = xform_multiply(&camera, &yaw);
-	}
-
-	// then pitch up/down to y elevation
-
-	xform pitch = xform_make(1, 0, 0, 0, h, -dir.y, 0, dir.y, h);
-	camera = xform_multiply(&camera, &pitch);
-
-	// and roll to position the up vector
-
-	if (up.x != 0 || up.y != 0)
-	{
-		l = sqrtf(up.x * up.x + up.y * up.y);
-		xform roll = xform_make(up.y / l, up.x / l, 0, -up.x / l, up.y / l, 0, 0, 0, 1);
-
-		scene->camera = xform_multiply(&camera, &roll);
-	}
+	// calculate forward vector
+	float3 fw = v3_sub(lookAt, origin);
+	if (v3_lensq(&fw) < 1.0e-6f)
+		fw = f3(1, 0, 0);
 	else
-		scene->camera = camera;
+		fw = v3_normalize(fw);
+	// calculate right vector
+	float3 rt = v3_cross(up, fw);
+	// up is nearly parallel to forward, pick a different "up"
+	if (v3_lensq(&rt) < 1.0e-6f) {
+		up = fabsf(fw.y) < 0.99f ? f3(0, 1, 0) : f3(1, 0, 0);
+		rt = v3_cross(up, fw);
+	}
+	rt = v3_normalize(rt);
+	// calculate final up
+	up = v3_cross(fw, rt);
+
+	xform x;
+	// rotation matrix, transposed since we need view matrix
+	x.m[0][0] = rt.x; x.m[0][1] = rt.y; x.m[0][2] = rt.z;
+	x.m[1][0] = up.x; x.m[1][1] = up.y; x.m[1][2] = up.z;
+	x.m[2][0] = fw.x; x.m[2][1] = fw.y; x.m[2][2] = fw.z;
+	// origin, again transformed since we need view matrix
+	x.x = -v3_dot(rt, origin);
+	x.y = -v3_dot(up, origin);
+	x.z = -v3_dot(fw, origin);
+	scene->camera = x;
 }
 
 typedef uint8_t Pattern[8];
