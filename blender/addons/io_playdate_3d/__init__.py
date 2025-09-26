@@ -28,7 +28,7 @@ def ensure_tris(me):
 def calc_luma(col):
     return 0.2126 * col[0] + 0.7152 * col[1] + 0.0722 * col[2]
 
-def collect_mesh_objects(visible_only=True, view_layer=None):
+def collect_mesh_objects(visible_only=True, selected_only=False, view_layer=None):
     if view_layer is None:
         view_layer = bpy.context.view_layer
     out = []
@@ -37,15 +37,17 @@ def collect_mesh_objects(visible_only=True, view_layer=None):
             continue
         if visible_only and not o.visible_get(view_layer=view_layer):
             continue
+        if selected_only and not o.select_get(view_layer=view_layer):
+            continue
         out.append(o)
     return out
 
-def export_file(filepath, *, visible_only=True, export_uvs=False, export_colors=False, export_anim=True, frame_step=1, use_scene_range=True, frame_start=None, frame_end=None, report=None):
+def export_file(filepath, *, visible_only=True, selected_only=False, local_space=False, export_uvs=False, export_colors=False, export_anim=True, frame_step=1, use_scene_range=True, frame_start=None, frame_end=None, report=None):
     scene = bpy.context.scene
     dg = bpy.context.evaluated_depsgraph_get()
     vl = bpy.context.view_layer
 
-    objs = collect_mesh_objects(visible_only, vl)
+    objs = collect_mesh_objects(visible_only, selected_only, vl)
     if not objs:
         if report: report({'WARNING'}, "No mesh objects to export.")
         return {'CANCELLED'}
@@ -147,10 +149,13 @@ def export_file(filepath, *, visible_only=True, export_uvs=False, export_colors=
             me.vertices.foreach_get("co", v)
             v = v.reshape(-1, 3)
             # transform to world coordinates
-            Mw = np.array(o.matrix_world, dtype=np.float32)
-            R = Mw[:3, :3]
-            t = Mw[:3, 3]
-            w = v @ R.T + t
+            if local_space:
+                w = v
+            else:
+                Mw = np.array(o.matrix_world, dtype=np.float32)
+                R = Mw[:3, :3]
+                t = Mw[:3, 3]
+                w = v @ R.T + t
             P[fi, off:off + cnt, :] = w @ S.T
             eo.to_mesh_clear()
         fi += 1
@@ -221,6 +226,16 @@ class EXPORT_OT_playdate_render3d(Operator, ExportHelper):
         description="Export visible objects only",
         default=True
     )
+    selected_only: BoolProperty(
+        name="Selected Only",
+        description="Export selected objects only",
+        default=False
+    )
+    local_space: BoolProperty(
+        name="Local Space",
+        description="Export positions in local space",
+        default=False
+    )
     export_uvs: BoolProperty(
         name="Export UVs",
         description="Export texture coordinates",
@@ -264,6 +279,8 @@ class EXPORT_OT_playdate_render3d(Operator, ExportHelper):
 
         col = layout.column()
         col.prop(self, "visible_only")
+        col.prop(self, "selected_only")
+        col.prop(self, "local_space")
         col.prop(self, "export_uvs")
         col.prop(self, "export_colors")
         col.prop(self, "export_anim")
@@ -283,6 +300,8 @@ class EXPORT_OT_playdate_render3d(Operator, ExportHelper):
         return export_file(
             self.filepath,
             visible_only=self.visible_only,
+            selected_only=self.selected_only,
+            local_space=self.local_space,
             export_uvs=self.export_uvs,
             export_colors=self.export_colors,
             export_anim=self.export_anim,
