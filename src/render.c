@@ -369,6 +369,7 @@ static void draw_mesh_instance(Scene* scene, uint8_t* buffer, int rowstride, con
 
 		++vis_tri_count;
 	}
+	scene->stats_visible_tris += vis_tri_count;
 
 	// sort faces by z
 	radixsort_upper16keys(scene->tmp_order_table1, scene->tmp_order_table2, vis_tri_count);
@@ -432,6 +433,8 @@ void scene_add_line(Scene* scene, float3 a, float3 b)
 
 void scene_draw(Scene* scene, uint8_t* buffer, int rowstride)
 {
+	scene->stats_visible_tris = 0;
+
 	// sort objects by distance
 	const MeshInstance** inst = scene->instances;
 	for (int i = 0; i < scene->inst_count; ++i, ++inst)

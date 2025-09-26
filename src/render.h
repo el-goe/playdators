@@ -15,7 +15,6 @@ enum MeshDrawFlags {
 	//@TODO: control for UV checker?
 };
 
-
 typedef struct Mesh {
 	int vertex_count;
 	int vertex_frame_count;
@@ -74,6 +73,8 @@ typedef struct Scene
 	int line_count;
 	int line_cap;
 	float3* line_buf;
+
+	int stats_visible_tris;
 } Scene;
 
 void drawLine(uint8_t* bitmap, int rowstride, const float3* p1, const float3* p2, int thick, const uint8_t pattern[8]);
