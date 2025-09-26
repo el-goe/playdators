@@ -8,19 +8,73 @@
 
 #define SHOW_STATS 1
 
-static Scene s_scene;
+enum TestMeshes {
+	TestMesh_Boulder001,
+	TestMesh_Boulder002,
+	TestMesh_Boulder007,
+	TestMesh_BugHotel,
+	TestMesh_Chocomel,
+	TestMesh_CampingTable,
+	TestMesh_Fence,
+	TestMesh_Log003,
+	TestMesh_SnowPiles,
+	TestMesh_Snowman,
+	TestMesh_TrafficCone,
+	TestMesh_BoulderSmall001,
+	TestMesh_BoulderSmall002,
+	TestMesh_BoulderSmall003,
+	TestMeshCount
+};
 
-static float s_cam_dist = 2.0f;
+static const char* kTestMeshesNames[TestMeshCount] = {
+	"boulder_001.pdm",
+	"boulder_002.pdm",
+	"boulder_007.pdm",
+	"bug_hotel.pdm",
+	"chocomel_merged.pdm",
+	"camping_table.pdm",
+	"fence.pdm",
+	"log_003.pdm",
+	"snow_piles.pdm",
+	"snowman.pdm",
+	"traffic_cone.pdm",
+	"boulder_small_001.pdm",
+	"boulder_small_002.pdm",
+	"boulder_small_003.pdm",
+};
 
-#define MESH_COUNT 8
-static Mesh* s_meshes[MESH_COUNT];
+static Mesh* s_meshes[TestMeshCount];
 
-static MeshInstance s_objects[MESH_COUNT];
+static bool load_meshes()
+{
+	for (int i = 0; i < TestMeshCount; ++i)
+	{
+		Mesh* m = mesh_load_from_file(kTestMeshesNames[i]);
+		if (!m)
+		{
+			plat_sys_log_error("Error: failed to load mesh %s", kTestMeshesNames[i]);
+			return false;
+		}
+		s_meshes[i] = m;
+	}
+	return true;
+}
 
-static int s_cur_anim = 0;
-static int s_cur_anim_start = 0;
-#define ANIM_COUNT 5
-static int s_anim_table[ANIM_COUNT + 1] = {
+// --------------------------------------------------------------------
+//  mesh zoo scene
+
+static MeshInstance s_zoo_objects[TestMeshCount];
+static Mesh* s_zoo_mesh_ground;
+static MeshInstance s_zoo_obj_ground;
+static Scene s_zoo_scene;
+static float s_zoo_cam_dist = 3.0f;
+static float3 s_zoo_cam_target = { 0,0,0 };
+static float3 s_zoo_obj_pos[TestMeshCount];
+
+static int s_choco_cur_anim = 0;
+static int s_choco_cur_anim_start = 0;
+#define CHOCOMEL_ANIM_COUNT 5
+static int s_choco_anim_table[CHOCOMEL_ANIM_COUNT + 1] = {
 	0, // idle sitting
 	54, // idle
 	60, // walk
@@ -28,6 +82,135 @@ static int s_anim_table[ANIM_COUNT + 1] = {
 	80, // dig
 	110,
 };
+
+static void init_zoo_scene()
+{
+	scene_init(&s_zoo_scene);
+	scene_setLight(&s_zoo_scene, f3(-1.0f, 1.0f, -0.1f));
+
+	int columns = (int)sqrtf(TestMeshCount);
+	float spacing = 3.0f;
+	float min_x = 0, max_x = 0;
+	float min_z = 0, max_z = 0;
+	for (int i = 0; i < TestMeshCount; ++i)
+	{
+		int i_col = i % columns;
+		int i_row = i / columns;
+		MeshInstance* go = &s_zoo_objects[i];
+		go->mesh = s_meshes[i];
+		go->tr = xform_identity;
+		float x = ((float)i_col - (columns - 1) * 0.5f) * spacing;
+		float z = ((float)i_row - (columns - 1) * 0.5f) * spacing;
+		min_x = min2f(min_x, x);
+		max_x = max2f(max_x, x);
+		min_z = min2f(min_z, z);
+		max_z = max2f(max_z, z);
+		go->tr.pos = s_zoo_obj_pos[i] = f3(x, 0, z);
+		go->frame = 0;
+		go->color = 1.0f;
+		go->flags = MeshDrawFlag_Solid | MeshDrawFlag_Lighting;
+		scene_add_mesh(&s_zoo_scene, go);
+	}
+
+	// procedural ground plane mesh
+	{
+		float padding = 1.5f;
+		int grid_min_x = (int)floorf(min_x - padding);
+		int grid_max_x = (int)ceilf(max_x + padding);
+		int grid_min_z = (int)floorf(min_z - padding);
+		int grid_max_z = (int)ceilf(max_z + padding);
+		int grid_seg_x = grid_max_x - grid_min_x;
+		int grid_seg_z = grid_max_z - grid_min_z;
+		Mesh* m = mesh_create((grid_seg_x + 1) * (grid_seg_z + 1), 1, grid_seg_x * grid_seg_z * 2, false, true, false);
+		float3* dst = (float3*)m->vertices;
+		for (int tz = grid_min_z; tz <= grid_max_z; tz++) {
+			for (int tx = grid_min_x; tx <= grid_max_x; tx++) {
+				dst->x = (float)tx;
+				dst->y = 0.0f;
+				dst->z = (float)tz;
+				dst++;
+			}
+		}
+		for (int tz = 0; tz < grid_seg_z; ++tz) {
+			for (int tx = 0; tx < grid_seg_x; ++tx) {
+				int qidx = tz * grid_seg_x + tx;
+				int base = tz * (grid_seg_x + 1) + tx;
+				m->tris[qidx * 6 + 0] = base;
+				m->tris[qidx * 6 + 1] = base + grid_seg_x + 1 + 1;
+				m->tris[qidx * 6 + 2] = base + 1;
+				m->tris[qidx * 6 + 3] = base;
+				m->tris[qidx * 6 + 4] = base + grid_seg_x + 1;
+				m->tris[qidx * 6 + 5] = base + grid_seg_x + 1 + 1;
+				m->colors[qidx * 2 + 0] = m->colors[qidx * 2 + 1] = ((tz ^ tx) & 1) ? 240 : 20;
+			}
+		}
+		s_zoo_mesh_ground = m;
+		s_zoo_obj_ground.mesh = m;
+		s_zoo_obj_ground.tr = xform_identity;
+		s_zoo_obj_ground.frame = 0;
+		s_zoo_obj_ground.color = 1.0f;
+		s_zoo_obj_ground.flags = MeshDrawFlag_Solid | MeshDrawFlag_Lighting;
+		s_zoo_obj_ground.sort_bias = 100.0f;
+		scene_add_mesh(&s_zoo_scene, &s_zoo_obj_ground);
+	}
+}
+
+static void update_zoo_scene()
+{
+	// up/down: move camera distance
+	if (G.buttons_cur & kPlatButtonUp)
+	{
+		s_zoo_cam_dist *= 0.9f;
+		s_zoo_cam_dist = max2f(0.3f, s_zoo_cam_dist);
+	}
+	if (G.buttons_cur & kPlatButtonDown)
+	{
+		s_zoo_cam_dist *= 1.1f;
+		s_zoo_cam_dist = min2f(10.0f, s_zoo_cam_dist);
+	}
+
+	// rotate objects
+	const float cur_time = plat_time_get();
+	for (int i = 0; i < TestMeshCount; ++i)
+	{
+		float angle = (float)i + cur_time * 0.1f;
+		xform tr = xform_make_axis_angle(angle, f3(0,1,0));
+		tr.pos = s_zoo_obj_pos[i];
+		s_zoo_objects[i].tr = tr;
+	}
+
+	// crank: orbit the camera
+	float cangle = G.crank_angle_rad + 0.3f;
+	float cs = cosf(cangle);
+	float ss = sinf(cangle);
+	scene_setCamera(&s_zoo_scene, f3(cs * s_zoo_cam_dist, 2.0f, ss * s_zoo_cam_dist), f3(0, 0.5f, 0), 1.0f, f3(0, 1, 0));
+
+	// draw
+	plat_gfx_clear(kSolidColorWhite);
+	scene_draw(&s_zoo_scene, G.framebuffer, G.framebuffer_stride);
+
+	G.statval1 = s_zoo_scene.stats_visible_tris;
+	G.statval2 = 0;
+
+	// set chocomel animation frame
+	const int cur_frame_idx = (int)(cur_time * 24.0f / 2.0f);
+	// B: swich animation clip
+	if (G.buttons_pressed & kPlatButtonB)
+	{
+		s_choco_cur_anim++;
+		if (s_choco_cur_anim >= CHOCOMEL_ANIM_COUNT)
+			s_choco_cur_anim = 0;
+		s_choco_cur_anim_start = cur_frame_idx;
+	}
+
+	const int anim_frames = s_choco_anim_table[s_choco_cur_anim + 1] - s_choco_anim_table[s_choco_cur_anim];
+	const int frame = (cur_frame_idx - s_choco_cur_anim_start) % anim_frames;
+	s_zoo_objects[TestMesh_Chocomel].frame = s_choco_anim_table[s_choco_cur_anim] + frame;
+}
+
+// --------------------------------------------------------------------
+//  move along a curve scene
+
 
 // Lissajous curve that repeats across t=0..1 range, result -20..+20 range.
 static float3 lissajous_curve(float t)
@@ -53,85 +236,9 @@ static void lissajous_curve_frame(float t, float3 *out_pos, float3 *out_prev, fl
 	*out_next = tpos_pos;
 }
 
-static void create_mesh_objects()
+static void init_curve_scene()
 {
-	s_meshes[0] = mesh_load_from_file("chocomel_merged.pdm");
-	s_objects[0].mesh = s_meshes[0];
-	s_objects[0].tr = xform_identity;
-	s_objects[0].frame = 0;
-	s_objects[0].color = 1.0f;
-	s_objects[0].flags = MeshDrawFlag_Solid | MeshDrawFlag_Lighting;
-
-	s_meshes[1] = mesh_load_from_file("boulder_007.pdm");
-	s_objects[1].mesh = s_meshes[1];
-	s_objects[1].tr = xform_make_translate(-2.0f, 0.0f, 2.0f);
-	s_objects[1].frame = 0;
-	s_objects[1].color = 1.0f;
-	s_objects[1].flags = MeshDrawFlag_Solid | MeshDrawFlag_Lighting;
-
-	s_meshes[2] = mesh_load_from_file("bug_hotel.pdm");
-	s_objects[2].mesh = s_meshes[2];
-	s_objects[2].tr = xform_make_translate(2.0f, 0.0f, 2.0f);
-	s_objects[2].frame = 0;
-	s_objects[2].color = 1.0f;
-	s_objects[2].flags = MeshDrawFlag_Solid | MeshDrawFlag_Lighting;
-
-	s_meshes[3] = mesh_load_from_file("camping_table.pdm");
-	s_objects[3].mesh = s_meshes[3];
-	s_objects[3].tr = xform_make_translate(2.0f, 0.0f, -2.0f);
-	s_objects[3].frame = 0;
-	s_objects[3].color = 1.0f;
-	s_objects[3].flags = MeshDrawFlag_Solid | MeshDrawFlag_Lighting;
-
-	s_meshes[4] = mesh_load_from_file("snowman.pdm");
-	s_objects[4].mesh = s_meshes[4];
-	s_objects[4].tr = xform_make_translate(-2.0f, 0.0f, -2.0f);
-	s_objects[4].frame = 0;
-	s_objects[4].color = 1.0f;
-	s_objects[4].flags = MeshDrawFlag_Solid | MeshDrawFlag_Lighting;
-
-	s_meshes[5] = mesh_load_from_file("traffic_cone.pdm");
-	s_objects[5].mesh = s_meshes[5];
-	s_objects[5].tr = xform_make_translate(0.0f, 0.0f, -1.0f);
-	s_objects[5].frame = 0;
-	s_objects[5].color = 1.0f;
-	s_objects[5].flags = MeshDrawFlag_Solid | MeshDrawFlag_Lighting;
-
-	{
-		// procedural grid
-		int grid = 4;
-		Mesh* m = mesh_create((grid + 1) * (grid + 1), 1, grid * grid * 2, false, true, false);
-		float3* dst = (float3*)m->vertices;
-		for (int ty = 0; ty < grid + 1; ty++) {
-			for (int tx = 0; tx < grid + 1; tx++) {
-				dst->x = tx - grid * 0.5f;
-				dst->y = 0.0f;
-				dst->z = ty - grid * 0.5f;
-				dst++;
-			}
-		}
-		for (int ty = 0; ty < grid; ++ty) {
-			for (int tx = 0; tx < grid; ++tx) {
-				int qidx = ty * grid + tx;
-				int base = ty * (grid+1) + tx;
-				m->tris[qidx * 6 + 0] = base;
-				m->tris[qidx * 6 + 1] = base + grid + 1 + 1;
-				m->tris[qidx * 6 + 2] = base + 1;
-				m->tris[qidx * 6 + 3] = base;
-				m->tris[qidx * 6 + 4] = base + grid + 1;
-				m->tris[qidx * 6 + 5] = base + grid + 1 + 1;
-				m->colors[qidx * 2 + 0] = m->colors[qidx * 2 + 1] = ((ty ^ tx) & 1) ? 192 : 64;
-			}
-		}
-		s_meshes[6] = m;
-		s_objects[6].mesh = m;
-		s_objects[6].tr = xform_make_translate(0.0f, 0.0f, 0.0f);
-		s_objects[6].frame = 0;
-		s_objects[6].color = 1.0f;
-		s_objects[6].flags = MeshDrawFlag_Solid | MeshDrawFlag_Lighting;
-		s_objects[6].sort_bias = 100.0f;
-	}
-
+	//@TODO
 	{
 		// Lissajous curve
 
@@ -174,6 +281,7 @@ static void create_mesh_objects()
 			dst_col += 4;
 			dst_wire += 4;
 		}
+		/*
 		s_meshes[7] = m;
 		s_objects[7].mesh = m;
 		s_objects[7].tr = xform_make_translate(0.0f, 0.0f, 0.0f);
@@ -181,27 +289,19 @@ static void create_mesh_objects()
 		s_objects[7].sort_bias = 1000.0f;
 		s_objects[7].color = 1.0f;
 		s_objects[7].flags = MeshDrawFlag_Solid | MeshDrawFlag_Wire | MeshDrawFlag_Lighting;
+		*/
 	}
 
 
-#if 1
-	// scene
-	for (int i = 0; i < MESH_COUNT - 1; ++i)
-		scene_add_mesh(&s_scene, &s_objects[i]);
-#else
 	// chocomel
-	scene_add_mesh(&s_scene, &s_objects[0]);
-	// traffic cone
-	//scene_add_mesh(&s_scene, &s_objects[5]);
+	//scene_add_mesh(&s_scene, &s_objects[0]);
 	// curve
-	scene_add_mesh(&s_scene, &s_objects[7]);
-	// debug
-	//scene_add_mesh(&s_scene, &s_objects[8]);
-#endif
+	//scene_add_mesh(&s_scene, &s_objects[7]);
 }
 
-static void meshes_update()
+static void update_curve_scene()
 {
+#if 0
 	if (G.buttons_cur & kPlatButtonUp)
 	{
 		s_cam_dist *= 0.9f;
@@ -213,22 +313,15 @@ static void meshes_update()
 		s_cam_dist = min2f(5.0f, s_cam_dist);
 	}
 
-#if 1
-	// crank orbits the camera
-	float cangle = G.crank_angle_rad;
-	float cs = cosf(cangle);
-	float ss = sinf(cangle);
-	scene_setCamera(&s_scene, f3(cs * s_cam_dist, 1.0f, ss * s_cam_dist), f3(0, 0.5f, 0), 1.0f, f3(0, 1, 0));
-#else
 	// time moves along the curve
 
-	static float time_offset = 0;
-	if (G.buttons_cur & kPlatButtonLeft)
-		time_offset -= 0.001f;
-	if (G.buttons_cur & kPlatButtonRight)
-		time_offset += 0.001f;
-	float cam_t = -plat_time_get() / 300.0f;
-	cam_t = -0.3f + time_offset;
+	//static float time_offset = 0;
+	//if (G.buttons_cur & kPlatButtonLeft)
+	//	time_offset -= 0.001f;
+	//if (G.buttons_cur & kPlatButtonRight)
+	//	time_offset += 0.001f;
+	float cam_t = -plat_time_get() / 100.0f;
+	//cam_t = -0.3f + time_offset;
 	float3 cpos, cpos_prev, cpos_next, cside;
 	lissajous_curve_frame(cam_t, &cpos, &cpos_prev, &cpos_next, &cside);
 	float3 cup = v3_normalize(v3_cross(cside, v3_sub(cpos_next, cpos)));
@@ -247,7 +340,6 @@ static void meshes_update()
 	s_objects[0].tr = obj_tr;
 
 	//scene_add_line(&s_scene, obj_tr.pos, v3_add(obj_tr.pos, obj_tr.ay));
-#endif
 
 	// draw
 	plat_gfx_clear(kSolidColorWhite);
@@ -271,14 +363,16 @@ static void meshes_update()
 	const int anim_frames = s_anim_table[s_cur_anim + 1] - s_anim_table[s_cur_anim];
 	const int frame = (cur_frame_idx - s_cur_anim_start) % anim_frames;
 	s_objects[0].frame = s_anim_table[s_cur_anim] + frame;
+#endif
 }
 
 void app_initialize()
 {
 	init_pixel_ops();
-	scene_init(&s_scene);
-	scene_setLight(&s_scene, f3(-1.0f, 1.0f, -0.3f));
-	create_mesh_objects();
+	if (!load_meshes())
+		return;
+	init_zoo_scene();
+	init_curve_scene();
 }
 
 void app_update()
@@ -297,7 +391,7 @@ void app_update()
 	G.framebuffer = plat_gfx_get_frame();
 	G.framebuffer_stride = SCREEN_STRIDE_BYTES;
 
-	meshes_update();
+	update_zoo_scene();
 
 	// draw FPS, stats
 #if SHOW_STATS
