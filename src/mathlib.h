@@ -6,6 +6,8 @@
 #include <stdbool.h>
 #include <math.h>
 
+// Coordinate conventions are: +X right, +Y up, +Z forward (i.e. matches Unity; Y up, left handed)
+
 
 #if defined(_MSC_VER)
 #  define FORCE_INLINE static __forceinline
@@ -330,6 +332,7 @@ xform xform_make(float xx, float xy, float xz, float yx, float yy, float yz, flo
 xform xform_axes(float3 x, float3 y, float3 z, float3 pos);
 xform xform_make_translate(float dx, float dy, float dz);
 xform xform_make_axis_angle(float angle, float3 axis);
+// transforms multiply right to left, i.e. `r` is child transform, followed by `l` parent transform
 xform xform_multiply(const xform* l, const xform* r);
 float3 xform_transform_pt(const xform* m, float3 p);
 float xform_get_determinant(xform* m);

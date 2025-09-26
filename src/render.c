@@ -2,6 +2,7 @@
 #include "render.h"
 #include "platform.h"
 #include "util/radixsort.h"
+#include <string.h>
 
 // Parts of the scanline rasterizer are originally based on:
 // - mini3d from Playdate SDK examples. Created by Dave Hayden on 10/20/15. Copyright © 2015 Panic, Inc. All rights reserved.
@@ -139,38 +140,29 @@ void drawLine(uint8_t* bitmap, int rowstride, const float3* p1, const float3* p2
 
 void scene_init(Scene* scene)
 {
+	memset(scene, 0, sizeof(*scene));
 	scene_setCamera(scene, (float3) { 0, 0, 0 }, (float3) { 0, 0, 1 }, 1.0, (float3) { 0, 1, 0 });
 	scene_setLight(scene, (float3) { 0, -1, 0 });
 
 	scene_setCenter(scene, 0.5, 0.5);
-
-	scene->tmp_points_cap = 0;
-	scene->tmp_world_points = NULL;
-	scene->tmp_proj_points = NULL;
-	scene->order_cap = 0;
-	scene->tmp_order_table1 = NULL;
-	scene->tmp_order_table2 = NULL;
-	scene->inst_count = 0;
-	scene->inst_cap = 0;
-	scene->instances = NULL;
-	scene->tmp_inst_order_table1 = NULL;
-	scene->tmp_inst_order_table2 = NULL;
 }
 
 void scene_shutdown(Scene* scene)
 {
-	plat_free(scene->tmp_world_points);
+	plat_free(scene->tmp_view_points);
 	plat_free(scene->tmp_proj_points);
 	plat_free(scene->tmp_order_table1);
 	plat_free(scene->tmp_order_table2);
 	plat_free(scene->instances);
 	plat_free(scene->tmp_inst_order_table1);
 	plat_free(scene->tmp_inst_order_table2);
+	plat_free(scene->line_buf);
 }
 
 void scene_setLight(Scene* scene, float3 light)
 {
 	scene->light = v3_normalize(light);
+	scene->light.y = -scene->light.y; // compensate for view space being flipped vertically
 }
 
 void scene_setCenter(Scene* scene, float x, float y)
@@ -183,7 +175,9 @@ void scene_setCamera(Scene* scene, float3 origin, float3 lookAt, float scale, fl
 {
 	scene->scale = 240 * scale;
 	xform m = xform_look_at(origin, lookAt, up);
-	scene->camera = xform_invert(&m);
+	scene->camera_xform = m;
+	m.ay = v3_neg(m.ay);
+	scene->view_xform = xform_invert(&m);
 }
 
 typedef uint8_t Pattern[8];
@@ -225,49 +219,23 @@ static Pattern patterns[] =
 	{ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff }
 };
 
-void drawShapeFace(const Scene* scene, uint8_t* bitmap, int rowstride, const float3* p1, const float3* p2, const float3* p3, const float3* normal, const Mesh* mesh, int tri_index, enum DrawStyle style, bool wire)
+static void draw_triangle(uint8_t* bitmap, int rowstride, const float3* p1, const float3* p2, const float3* p3, const float brightness, enum MeshDrawFlags draw_flags, const uint8_t wire_flags)
 {
-	// lighting
-	float v = v3_dot(*normal, scene->light) * 0.5f + 0.5f;
-	//v = normal->z * 0.5f + 0.5f;
-
-	if (mesh->colors) {
-		v *= mesh->colors[tri_index] * (1.0f / 255.0f);
-	}
-
-	// cheap gamma adjust
-	//v = v * v;
-
-	if (style == Draw_Pattern)
+	if (draw_flags & MeshDrawFlag_Solid)
 	{
-		int vi = (int)(32.99f * v);
-		if (vi > 32)
-			vi = 32;
-		else if (vi < 0)
-			vi = 0;
-		const uint8_t* pattern = (const uint8_t*)&patterns[vi];
+		int pat_idx = clamp_i((int)(brightness * 32.99f), 0, 32);
+		const uint8_t* pattern = (const uint8_t*)&patterns[pat_idx];
 		draw_tri_pattern(bitmap, rowstride, p1, p2, p3, pattern);
 	}
-	else if (style == Draw_Bluenoise)
-	{
-		int col = (int)(v * 255.0f);
-		if (col < 0) col = 0;
-		if (col > 255) col = 255;
-		draw_tri_bluenoise(bitmap, rowstride, p1, p2, p3, col);
-	}
-	else if (style == Draw_Checker)
-	{
-		static float dummy_uvs[6] = {0.0f, 0.0f, 0.2f, 0.0f, 0.0f, 0.2f};
-		draw_tri_checker(bitmap, rowstride, p1, p2, p3, mesh->uvs ? mesh->uvs + tri_index * 6 : dummy_uvs);
-	}
+	//@TODO: draw_tri_bluenoise via some flag/option
+	//@TODO: draw_tri_checker via some flag/option
 
-	// wireframe
-	if (wire)
+	if (draw_flags & MeshDrawFlag_Wire)
 	{
 		const uint8_t* pattern = (const uint8_t*)&patterns[0];
-		drawLine(bitmap, rowstride, p1, p2, 1, pattern);
-		drawLine(bitmap, rowstride, p2, p3, 1, pattern);
-		drawLine(bitmap, rowstride, p3, p1, 1, pattern);
+		if (wire_flags & 1) drawLine(bitmap, rowstride, p1, p2, 1, pattern);
+		if (wire_flags & 2) drawLine(bitmap, rowstride, p2, p3, 1, pattern);
+		if (wire_flags & 4) drawLine(bitmap, rowstride, p3, p1, 1, pattern);
 	}
 }
 
@@ -288,12 +256,15 @@ static inline uint32_t pack_depth_index(float z, uint32_t index)
 	return bits.u;
 }
 
-static void draw_mesh(Scene* scene, uint8_t* buffer, int rowstride, const Mesh* mesh, const xform* matrix, int frame, enum DrawStyle style, bool wire)
+static void draw_mesh_instance(Scene* scene, uint8_t* buffer, int rowstride, const MeshInstance* inst)
 {
+	const Mesh* mesh = inst->mesh;
+	const xform* matrix = &inst->tr;
+
 	// temporary buffers
 	if (scene->tmp_points_cap < mesh->vertex_count) {
 		scene->tmp_points_cap = mesh->vertex_count;
-		scene->tmp_world_points = plat_realloc(scene->tmp_world_points, scene->tmp_points_cap * sizeof(scene->tmp_world_points[0]));
+		scene->tmp_view_points = plat_realloc(scene->tmp_view_points, scene->tmp_points_cap * sizeof(scene->tmp_view_points[0]));
 		scene->tmp_proj_points = plat_realloc(scene->tmp_proj_points, scene->tmp_points_cap * sizeof(scene->tmp_proj_points[0]));
 	}
 	if (scene->order_cap < mesh->tri_count) {
@@ -305,10 +276,7 @@ static void draw_mesh(Scene* scene, uint8_t* buffer, int rowstride, const Mesh* 
 	}
 
 	// transform points
-	if (frame < 0)
-		frame = 0;
-	if (frame >= mesh->vertex_frame_count)
-		frame = mesh->vertex_frame_count;
+	int frame = clamp_i(inst->frame, 0, mesh->vertex_frame_count - 1);
 	if ((mesh->flags & MeshFlag_FloatVertices) == 0)
 	{
 		// vertices in fixed point
@@ -323,7 +291,7 @@ static void draw_mesh(Scene* scene, uint8_t* buffer, int rowstride, const Mesh* 
 			const uint32_t v_bits_z = v_bits >> 21;
 			float3 v_pos = { (float)v_bits_x, (float)v_bits_y, (float)v_bits_z };
 			v_pos = v3_add(v3_mul(v_pos, bbox_scale), bbox_min);
-			scene->tmp_world_points[i] = xform_transform_pt(&scene->camera, xform_transform_pt(matrix, v_pos));
+			scene->tmp_view_points[i] = xform_transform_pt(&scene->view_xform, xform_transform_pt(matrix, v_pos));
 			++src_vtx;
 		}
 	}
@@ -333,7 +301,7 @@ static void draw_mesh(Scene* scene, uint8_t* buffer, int rowstride, const Mesh* 
 		const float3* src_vtx = (const float3*)mesh->vertices + frame * mesh->vertex_count;
 		for (int i = 0; i < mesh->vertex_count; ++i)
 		{
-			scene->tmp_world_points[i] = xform_transform_pt(&scene->camera, xform_transform_pt(matrix, *src_vtx));
+			scene->tmp_view_points[i] = xform_transform_pt(&scene->view_xform, xform_transform_pt(matrix, *src_vtx));
 			++src_vtx;
 		}
 	}
@@ -344,7 +312,7 @@ static void draw_mesh(Scene* scene, uint8_t* buffer, int rowstride, const Mesh* 
 	const float proj_add_y = scene->centery * scene_scale;
 	for (int i = 0; i < mesh->vertex_count; ++i)
 	{
-		const float3* p = &scene->tmp_world_points[i];
+		const float3* p = &scene->tmp_view_points[i];
 		float3* pp = &scene->tmp_proj_points[i];
 		const float pz = p->z;
 		if (pz > 0)
@@ -392,11 +360,11 @@ static void draw_mesh(Scene* scene, uint8_t* buffer, int rowstride, const Mesh* 
 		float dx31 = x3 - x1;
 		float dy21 = y2 - y1;
 		float d = dx21 * dy31 - dy21 * dx31;
-		if (d >= 0)
+		if (d <= 0)
 			continue;
 
 		// compute face depth midpoints
-		float z = -(scene->tmp_world_points[idx0].z + scene->tmp_world_points[idx1].z + scene->tmp_world_points[idx2].z);
+		float z = -(scene->tmp_view_points[idx0].z + scene->tmp_view_points[idx1].z + scene->tmp_view_points[idx2].z);
 		scene->tmp_order_table1[vis_tri_count] = pack_depth_index(z, i);
 
 		++vis_tri_count;
@@ -407,6 +375,7 @@ static void draw_mesh(Scene* scene, uint8_t* buffer, int rowstride, const Mesh* 
 	const uint32_t* sorted_order = scene->tmp_order_table1;
 
 	// draw faces
+	const bool use_lighting = (inst->flags & (MeshDrawFlag_Solid | MeshDrawFlag_Lighting)) == (MeshDrawFlag_Solid | MeshDrawFlag_Lighting);
 	for (int i = 0; i < vis_tri_count; ++i)
 	{
 		uint16_t fi = sorted_order[i] & 0xFFFF;
@@ -414,8 +383,24 @@ static void draw_mesh(Scene* scene, uint8_t* buffer, int rowstride, const Mesh* 
 		uint16_t idx1 = mesh->tris[fi * 3 + 1];
 		uint16_t idx2 = mesh->tris[fi * 3 + 2];
 
-		float3 normal = v3_tri_normal(&scene->tmp_world_points[idx0], &scene->tmp_world_points[idx1], &scene->tmp_world_points[idx2]);
-		drawShapeFace(scene, buffer, rowstride, &scene->tmp_proj_points[idx0], &scene->tmp_proj_points[idx1], &scene->tmp_proj_points[idx2], &normal, mesh, fi, style, wire);
+		float brightness = inst->color;
+		if (use_lighting)
+		{
+			float3 normal = v3_tri_normal(&scene->tmp_view_points[idx0], &scene->tmp_view_points[idx2], &scene->tmp_view_points[idx1]);
+			// wrapped diffuse
+			float diff = v3_dot(normal, scene->light) * 0.5f + 0.5f;
+			brightness *= diff;
+		}
+		if (mesh->colors)
+		{
+			brightness *= mesh->colors[fi] * (1.0f / 255.0f);
+		}
+
+		//@TODO: cheap gamma adjust?
+		//brightness = brightness * brightness;
+
+		uint8_t wire_flag = mesh->wire_flags ? mesh->wire_flags[fi] : 0xFF;
+		draw_triangle(buffer, rowstride, &scene->tmp_proj_points[idx0], &scene->tmp_proj_points[idx2], &scene->tmp_proj_points[idx1], brightness, inst->flags, wire_flag);
 	}
 }
 
@@ -428,13 +413,24 @@ void scene_add_mesh(Scene* scene, const MeshInstance* inst)
 		plat_free(scene->tmp_inst_order_table2);
 		scene->tmp_inst_order_table1 = plat_malloc(scene->inst_cap * sizeof(scene->tmp_inst_order_table1[0]));
 		scene->tmp_inst_order_table2 = plat_malloc(scene->inst_cap * sizeof(scene->tmp_inst_order_table2[0]));
-
 	}
 	scene->instances[scene->inst_count] = inst;
 	scene->inst_count++;
 }
 
-void scene_draw(Scene* scene, uint8_t* buffer, int rowstride, enum DrawStyle style, bool wire)
+void scene_add_line(Scene* scene, float3 a, float3 b)
+{
+	if (scene->line_count + 2 > scene->line_cap) {
+		scene->line_cap = scene->line_count + 32;
+		scene->line_buf = plat_realloc(scene->line_buf, scene->line_cap * sizeof(scene->line_buf[0]));
+	}
+	scene->line_buf[scene->line_count + 0] = a;
+	scene->line_buf[scene->line_count + 1] = b;
+	scene->line_count += 2;
+}
+
+
+void scene_draw(Scene* scene, uint8_t* buffer, int rowstride)
 {
 	// sort objects by distance
 	const MeshInstance** inst = scene->instances;
@@ -442,8 +438,9 @@ void scene_draw(Scene* scene, uint8_t* buffer, int rowstride, enum DrawStyle sty
 	{
 		const Mesh* mesh = (*inst)->mesh;
 		float3 center_local = xform_transform_pt(&(*inst)->tr, mesh->center);
-		float3 center = xform_transform_pt(&scene->camera, center_local);
-		scene->tmp_inst_order_table1[i] = pack_depth_index(-center.z, i);
+		float3 center = xform_transform_pt(&scene->view_xform, center_local);
+		float z = center.z + (*inst)->sort_bias;
+		scene->tmp_inst_order_table1[i] = pack_depth_index(-z, i);
 	}
 	radixsort_upper16keys(scene->tmp_inst_order_table1, scene->tmp_inst_order_table2, scene->inst_count);
 
@@ -452,8 +449,27 @@ void scene_draw(Scene* scene, uint8_t* buffer, int rowstride, enum DrawStyle sty
 	{
 		uint16_t index = scene->tmp_inst_order_table1[i] & 0xFFFF;
 		const MeshInstance* inst = scene->instances[index];
-		draw_mesh(scene, buffer, rowstride, inst->mesh, &inst->tr, inst->frame, style, wire);
+		draw_mesh_instance(scene, buffer, rowstride, inst);
 	}
+
+	// draw loose lines
+	const float scene_scale = scene->scale;
+	const float proj_add_x = 1.6666666f * scene->centerx * scene_scale;
+	const float proj_add_y = scene->centery * scene_scale;
+	for (int i = 0; i < scene->line_count; i += 2)
+	{
+		float3 view_a = xform_transform_pt(&scene->view_xform, scene->line_buf[i + 0]);
+		float3 view_b = xform_transform_pt(&scene->view_xform, scene->line_buf[i + 1]);
+		if (view_a.z > 0 && view_b.z > 0)
+		{
+			view_a.x = view_a.x * scene_scale / view_a.z + proj_add_x;
+			view_a.y = view_a.y * scene_scale / view_a.z + proj_add_y;
+			view_b.x = view_b.x * scene_scale / view_b.z + proj_add_x;
+			view_b.y = view_b.y * scene_scale / view_b.z + proj_add_y;
+			drawLine(buffer, rowstride, &view_a, &view_b, 1, patterns[0]);
+		}
+	}
+	scene->line_count = 0; // clear lines each frame
 }
 
 // --------------------------------------------------------------------------
@@ -489,6 +505,7 @@ Mesh* mesh_load_from_file(const char* path)
 	mesh->bbox_max = header.bbox_max;
 	mesh->center = v3_mulfl(v3_add(mesh->bbox_min, mesh->bbox_max), 0.5f);
 	mesh->flags = 0;
+	mesh->wire_flags = NULL;
 
 	const size_t tri_size = header.num_tris * 3 * sizeof(uint16_t);
 	mesh->tris = plat_malloc(tri_size);
@@ -533,11 +550,11 @@ _fail:
 	return NULL;
 }
 
-Mesh* mesh_create(int vertex_count, int frame_count, int tri_count, bool uvs, bool colors)
+Mesh* mesh_create(int vertex_count, int frame_count, int tri_count, bool uvs, bool colors, bool wire_flags)
 {
 	if (frame_count < 1)
 		frame_count = 1;
-	Mesh* mesh = plat_malloc(sizeof(Mesh));
+	Mesh* mesh = plat_calloc(sizeof(Mesh));
 	mesh->vertex_count = vertex_count;
 	mesh->vertex_frame_count = frame_count;
 	mesh->tri_count = tri_count;
@@ -546,18 +563,23 @@ Mesh* mesh_create(int vertex_count, int frame_count, int tri_count, bool uvs, bo
 	mesh->center = f3(0,0,0);
 	mesh->flags = MeshFlag_FloatVertices;
 
-	mesh->tris = plat_malloc(mesh->tri_count * 3 * sizeof(uint16_t));
+	mesh->tris = plat_calloc(mesh->tri_count * 3 * sizeof(uint16_t));
 	if (uvs)
-		mesh->uvs = plat_malloc(mesh->tri_count * 3 * sizeof(float2));
+		mesh->uvs = plat_calloc(mesh->tri_count * 3 * sizeof(float2));
 	else
 		mesh->uvs = NULL;
 
 	if (colors)
-		mesh->colors = plat_malloc(mesh->tri_count * sizeof(uint8_t));
+		mesh->colors = plat_calloc(mesh->tri_count * sizeof(uint8_t));
 	else
 		mesh->colors = NULL;
 
-	mesh->vertices = plat_malloc(mesh->vertex_count * mesh->vertex_frame_count * sizeof(float3));
+	if (wire_flags)
+		mesh->wire_flags = plat_calloc(mesh->tri_count * sizeof(uint8_t));
+	else
+		mesh->wire_flags = NULL;
+
+	mesh->vertices = plat_calloc(mesh->vertex_count * mesh->vertex_frame_count * sizeof(float3));
 	return mesh;
 }
 
@@ -565,11 +587,10 @@ void mesh_free(Mesh* mesh)
 {
 	if (!mesh)
 		return;
-	if (mesh->vertices)
-		plat_free(mesh->vertices);
-	if (mesh->uvs)
-		plat_free(mesh->uvs);
-	if (mesh->tris)
-		plat_free(mesh->tris);
+	plat_free(mesh->vertices);
+	plat_free(mesh->uvs);
+	plat_free(mesh->tris);
+	plat_free(mesh->colors);
+	plat_free(mesh->wire_flags);
 	plat_free(mesh);
 }

@@ -32,22 +32,22 @@ xform xform_make_axis_angle(float angle, float3 axis)
 	xform p;
 	float c = cosf(angle);
 	float s = sinf(angle);
+	float t = 1.0f - c;
+	axis = v3_normalize(axis);
 	float x = axis.x;
 	float y = axis.y;
 	float z = axis.z;
-	float d = sqrtf(x * x + y * y + z * z);
-	x /= d;
-	y /= d;
-	z /= d;
-	p.ax.x = c + x * x * (1 - c);
-	p.ax.y = x * y * (1 - c) - z * s;
-	p.ax.z = x * z * (1 - c) + y * s;
-	p.ay.x = y * x * (1 - c) + z * s;
-	p.ay.y = c + y * y * (1 - c);
-	p.ay.z = y * z * (1 - c) - x * s;
-	p.az.x = z * x * (1 - c) - y * s;
-	p.az.y = z * y * (1 - c) + x * s;
-	p.az.z = c + z * z * (1 - c);
+	p.ax.x = c + x * x * t;
+	p.ax.y = x * y * t + z * s;
+	p.ax.z = x * z * t - y * s;
+
+	p.ay.x = y * x * t - z * s;
+	p.ay.y = c + y * y * t;
+	p.ay.z = y * z * t + x * s;
+
+	p.az.x = z * x * t + y * s;
+	p.az.y = z * y * t - x * s;
+	p.az.z = c + z * z * t;
 	p.pos = f3(0, 0, 0);
 	return p;
 }
@@ -56,25 +56,25 @@ xform xform_multiply(const xform* l, const xform* r)
 {
 	xform m;
 	m.ax.x = l->ax.x * r->ax.x + l->ay.x * r->ax.y + l->az.x * r->ax.z;
-	m.ay.x = l->ax.x * r->ay.x + l->ay.x * r->ay.y + l->az.x * r->ay.z;
-	m.az.x = l->ax.x * r->az.x + l->ay.x * r->az.y + l->az.x * r->az.z;
 	m.ax.y = l->ax.y * r->ax.x + l->ay.y * r->ax.y + l->az.y * r->ax.z;
-	m.ay.y = l->ax.y * r->ay.x + l->ay.y * r->ay.y + l->az.y * r->ay.z;
-	m.az.y = l->ax.y * r->az.x + l->ay.y * r->az.y + l->az.y * r->az.z;
 	m.ax.z = l->ax.z * r->ax.x + l->ay.z * r->ax.y + l->az.z * r->ax.z;
+	m.ay.x = l->ax.x * r->ay.x + l->ay.x * r->ay.y + l->az.x * r->ay.z;
+	m.ay.y = l->ax.y * r->ay.x + l->ay.y * r->ay.y + l->az.y * r->ay.z;
 	m.ay.z = l->ax.z * r->ay.x + l->ay.z * r->ay.y + l->az.z * r->ay.z;
+	m.az.x = l->ax.x * r->az.x + l->ay.x * r->az.y + l->az.x * r->az.z;
+	m.az.y = l->ax.y * r->az.x + l->ay.y * r->az.y + l->az.y * r->az.z;
 	m.az.z = l->ax.z * r->az.x + l->ay.z * r->az.y + l->az.z * r->az.z;
-	m.pos.x = l->pos.x * r->ax.x + l->pos.y * r->ax.y + l->pos.z * r->ax.z + r->pos.x;
-	m.pos.y = l->pos.x * r->ay.x + l->pos.y * r->ay.y + l->pos.z * r->ay.z + r->pos.y;
-	m.pos.z = l->pos.x * r->az.x + l->pos.y * r->az.y + l->pos.z * r->az.z + r->pos.z;
+	m.pos.x = l->pos.x + l->ax.x * r->pos.x + l->ay.x * r->pos.y + l->az.x * r->pos.z;
+	m.pos.y = l->pos.y + l->ax.y * r->pos.x + l->ay.y * r->pos.y + l->az.y * r->pos.z;
+	m.pos.z = l->pos.z + l->ax.z * r->pos.x + l->ay.z * r->pos.y + l->az.z * r->pos.z;
 	return m;
 }
 
 float3 xform_transform_pt(const xform* m, float3 p)
 {
-	float x = p.x * m->ax.x + p.y * m->ax.y + p.z * m->ax.z + m->pos.x;
-	float y = p.x * m->ay.x + p.y * m->ay.y + p.z * m->ay.z + m->pos.y;
-	float z = p.x * m->az.x + p.y * m->az.y + p.z * m->az.z + m->pos.z;
+	float x = p.x * m->ax.x + p.y * m->ay.x + p.z * m->az.x + m->pos.x;
+	float y = p.x * m->ax.y + p.y * m->ay.y + p.z * m->az.y + m->pos.y;
+	float z = p.x * m->ax.z + p.y * m->ay.z + p.z * m->az.z + m->pos.z;
 
 	return (float3) { x, y, z };
 }
@@ -94,7 +94,7 @@ xform xform_look_at(float3 pos, float3 target, float3 up)
 	// calculate forward vector
 	float3 fw = v3_sub(target, pos);
 	if (v3_lensq(&fw) < 1.0e-6f)
-		fw = f3(1, 0, 0);
+		fw = f3(0, 0, 1);
 	else
 		fw = v3_normalize(fw);
 	// calculate right vector
@@ -102,7 +102,7 @@ xform xform_look_at(float3 pos, float3 target, float3 up)
 	// up is nearly parallel to forward, pick a different "up"
 	if (v3_lensq(&rt) < 1.0e-6f) {
 		up = fabsf(fw.y) < 0.99f ? f3(0, 1, 0) : f3(1, 0, 0);
-		rt = v3_cross(up, fw);
+		rt = v3_cross(fw, up);
 	}
 	rt = v3_normalize(rt);
 	// calculate final up
@@ -119,11 +119,11 @@ xform xform_look_at(float3 pos, float3 target, float3 up)
 xform xform_invert(const xform* m)
 {
 	xform r;
-	r.ax.x = m->ax.x; r.ay.x = m->ay.x; r.az.x = m->az.x;
-	r.ax.y = m->ax.y; r.ay.y = m->ay.y; r.az.y = m->az.y;
-	r.ax.z = m->ax.z; r.ay.z = m->ay.z; r.az.z = m->az.z;
-	r.pos.x = -v3_dot(r.ax, m->pos);
-	r.pos.y = -v3_dot(r.ay, m->pos);
-	r.pos.z = -v3_dot(r.az, m->pos);
+	r.ax.x = m->ax.x; r.ay.x = m->ax.y; r.az.x = m->ax.z;
+	r.ax.y = m->ay.x; r.ay.y = m->ay.y; r.az.y = m->ay.z;
+	r.ax.z = m->az.x; r.ay.z = m->az.y; r.az.z = m->az.z;
+	r.pos.x = -v3_dot(m->ax, m->pos);
+	r.pos.y = -v3_dot(m->ay, m->pos);
+	r.pos.z = -v3_dot(m->az, m->pos);
 	return r;
 }

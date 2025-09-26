@@ -20,6 +20,12 @@ void* plat_malloc(size_t size)
 {
 	return s_pd->system->realloc(NULL, size);
 }
+void* plat_calloc(size_t size)
+{
+	void* ptr = s_pd->system->realloc(NULL, size);
+	memset(ptr, 0, size);
+	return ptr;
+}
 void* plat_realloc(void* ptr, size_t size)
 {
 	return s_pd->system->realloc(ptr, size);
@@ -228,6 +234,10 @@ static uint8_t s_screen_debug_buffer[SCREEN_X * SCREEN_Y * 4];
 void* plat_malloc(size_t size)
 {
 	return malloc(size);
+}
+void* plat_calloc(size_t size)
+{
+	return calloc(size, 1);
 }
 void* plat_realloc(void* ptr, size_t size)
 {
