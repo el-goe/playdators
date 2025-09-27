@@ -15,6 +15,12 @@ enum MeshDrawFlags {
 	//@TODO: control for UV checker?
 };
 
+enum SceneDrawFlags {
+	// When set, uses blue noise dithering.
+	// When not set, predefined dithering patterns are used (faster).
+	SceneDrawFlag_DitherBluenoise = (1 << 0)
+};
+
 typedef struct Mesh {
 	int vertex_count;
 	int vertex_frame_count;
@@ -87,4 +93,4 @@ void scene_setCenter(Scene* scene, float x, float y);
 
 void scene_add_mesh(Scene* scene, const MeshInstance* inst);
 void scene_add_line(Scene* scene, float3 a, float3 b);
-void scene_draw(Scene* scene, uint8_t* buffer, int rowstride);
+void scene_draw(Scene* scene, uint8_t* buffer, int rowstride, enum SceneDrawFlags draw_flags);

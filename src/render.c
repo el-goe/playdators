@@ -219,15 +219,24 @@ static Pattern patterns[] =
 	{ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff }
 };
 
-static void draw_triangle(uint8_t* bitmap, int rowstride, const float3* p1, const float3* p2, const float3* p3, const float brightness, enum MeshDrawFlags draw_flags, const uint8_t wire_flags)
+static void draw_triangle(uint8_t* bitmap, int rowstride, const float3* p1, const float3* p2, const float3* p3, const float brightness, enum MeshDrawFlags draw_flags, const uint8_t wire_flags, enum SceneDrawFlags scene_draw_flags)
 {
 	if (draw_flags & MeshDrawFlag_Solid)
 	{
-		int pat_idx = clamp_i((int)(brightness * 32.99f), 0, 32);
-		const uint8_t* pattern = (const uint8_t*)&patterns[pat_idx];
-		draw_tri_pattern(bitmap, rowstride, p1, p2, p3, pattern);
+		if ((scene_draw_flags & SceneDrawFlag_DitherBluenoise) == 0)
+		{
+			// dither pattern
+			int pat_idx = clamp_i((int)(brightness * 32.99f), 0, 32);
+			const uint8_t* pattern = (const uint8_t*)&patterns[pat_idx];
+			draw_tri_pattern(bitmap, rowstride, p1, p2, p3, pattern);
+		}
+		else
+		{
+			// blue noise
+			int color = clamp_i((int)(brightness * 255.0f), 0, 255);
+			draw_tri_bluenoise(bitmap, rowstride, p1, p2, p3, color);
+		}
 	}
-	//@TODO: draw_tri_bluenoise via some flag/option
 	//@TODO: draw_tri_checker via some flag/option
 
 	if (draw_flags & MeshDrawFlag_Wire)
@@ -256,7 +265,7 @@ static inline uint32_t pack_depth_index(float z, uint32_t index)
 	return bits.u;
 }
 
-static void draw_mesh_instance(Scene* scene, uint8_t* buffer, int rowstride, const MeshInstance* inst)
+static void draw_mesh_instance(Scene* scene, uint8_t* buffer, int rowstride, const MeshInstance* inst, enum SceneDrawFlags scene_draw_flags)
 {
 	const Mesh* mesh = inst->mesh;
 	const xform* matrix = &inst->tr;
@@ -401,7 +410,7 @@ static void draw_mesh_instance(Scene* scene, uint8_t* buffer, int rowstride, con
 		//brightness = brightness * brightness;
 
 		uint8_t wire_flag = mesh->wire_flags ? mesh->wire_flags[fi] : 0xFF;
-		draw_triangle(buffer, rowstride, &scene->tmp_proj_points[idx0], &scene->tmp_proj_points[idx2], &scene->tmp_proj_points[idx1], brightness, inst->flags, wire_flag);
+		draw_triangle(buffer, rowstride, &scene->tmp_proj_points[idx0], &scene->tmp_proj_points[idx2], &scene->tmp_proj_points[idx1], brightness, inst->flags, wire_flag, scene_draw_flags);
 	}
 }
 
@@ -431,7 +440,7 @@ void scene_add_line(Scene* scene, float3 a, float3 b)
 }
 
 
-void scene_draw(Scene* scene, uint8_t* buffer, int rowstride)
+void scene_draw(Scene* scene, uint8_t* buffer, int rowstride, enum SceneDrawFlags draw_flags)
 {
 	scene->stats_visible_tris = 0;
 
@@ -452,7 +461,7 @@ void scene_draw(Scene* scene, uint8_t* buffer, int rowstride)
 	{
 		uint16_t index = scene->tmp_inst_order_table1[i] & 0xFFFF;
 		const MeshInstance* inst = scene->instances[index];
-		draw_mesh_instance(scene, buffer, rowstride, inst);
+		draw_mesh_instance(scene, buffer, rowstride, inst, draw_flags);
 	}
 
 	// draw loose lines

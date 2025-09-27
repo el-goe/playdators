@@ -70,6 +70,7 @@ static Scene s_zoo_scene;
 static float s_zoo_cam_dist = 3.0f;
 static float3 s_zoo_cam_target = { 0,0,0 };
 static float3 s_zoo_obj_pos[TestMeshCount];
+static bool s_zoo_bluenoise = false;
 
 static int s_choco_cur_anim = 0;
 static int s_choco_cur_anim_start = 0;
@@ -187,7 +188,10 @@ static void update_zoo_scene()
 
 	// draw
 	plat_gfx_clear(kSolidColorWhite);
-	scene_draw(&s_zoo_scene, G.framebuffer, G.framebuffer_stride);
+	enum SceneDrawFlags draw_flags = 0;
+	if (s_zoo_bluenoise)
+		draw_flags |= SceneDrawFlag_DitherBluenoise;
+	scene_draw(&s_zoo_scene, G.framebuffer, G.framebuffer_stride, draw_flags);
 
 	G.statval1 = s_zoo_scene.stats_visible_tris;
 	G.statval2 = 0;
@@ -206,6 +210,10 @@ static void update_zoo_scene()
 	const int anim_frames = s_choco_anim_table[s_choco_cur_anim + 1] - s_choco_anim_table[s_choco_cur_anim];
 	const int frame = (cur_frame_idx - s_choco_cur_anim_start) % anim_frames;
 	s_zoo_objects[TestMesh_Chocomel].frame = s_choco_anim_table[s_choco_cur_anim] + frame;
+
+	// A: toggle bluenoise vs pattern
+	if (G.buttons_pressed & kPlatButtonA)
+		s_zoo_bluenoise = !s_zoo_bluenoise;
 }
 
 // --------------------------------------------------------------------
