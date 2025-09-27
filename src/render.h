@@ -83,8 +83,6 @@ typedef struct Scene
 	int stats_visible_tris;
 } Scene;
 
-void drawLine(uint8_t* bitmap, int rowstride, const float3* p1, const float3* p2, int thick, const uint8_t pattern[8]);
-
 void scene_init(Scene* scene);
 void scene_shutdown(Scene* scene);
 void scene_setCamera(Scene* scene, float3 origin, float3 lookAt, float scale, float3 up);

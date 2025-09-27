@@ -4,30 +4,30 @@
 #include "util/radixsort.h"
 #include <string.h>
 
-// Parts of the scanline rasterizer are originally based on:
+// Parts of the scanline rasterizer were originally based on
 // - mini3d from Playdate SDK examples. Created by Dave Hayden on 10/20/15. Copyright © 2015 Panic, Inc. All rights reserved.
+// But probably almost everything is replaced by now :)
 
-FORCE_INLINE void _drawMaskPattern(uint32_t* p, uint32_t mask, uint32_t color)
+FORCE_INLINE void write_masked_black(uint32_t* p, uint32_t mask)
 {
-	if ( mask == 0xffffffff )
-		*p = color;
+	if (mask == 0xffffffff)
+		*p = 0;
 	else
-		*p = (*p & ~mask) | (color & mask);
+		*p = (*p & ~mask); // " | (color & mask)" but color is always black
 }
 
-static void
-drawFragment(uint32_t* row, int x1, int x2, uint32_t color)
+static void draw_black_fragment(uint32_t* row, int x1, int x2)
 {
-	if ( x2 < 0 || x1 >= SCREEN_X )
+	if (x2 < 0 || x1 >= SCREEN_X)
 		return;
 	
-	if ( x1 < 0 )
+	if (x1 < 0)
 		x1 = 0;
 	
-	if ( x2 > SCREEN_X )
+	if (x2 > SCREEN_X)
 		x2 = SCREEN_X;
 	
-	if ( x1 > x2 )
+	if (x1 > x2)
 		return;
 	
 	// Operate on 32 bits at a time
@@ -40,7 +40,7 @@ drawFragment(uint32_t* row, int x1, int x2, uint32_t color)
 	int col = x1 / 32;
 	uint32_t* p = row + col;
 
-	if ( col == x2 / 32 )
+	if (col == x2 / 32)
 	{
 		uint32_t mask = 0;
 		
@@ -51,26 +51,26 @@ drawFragment(uint32_t* row, int x1, int x2, uint32_t color)
 		else if ( endbit > 0 )
 			mask = endmask;
 		
-		_drawMaskPattern(p, mask, color);
+		write_masked_black(p, mask);
 	}
 	else
 	{
 		int x = x1;
 		
-		if ( startbit > 0 )
+		if (startbit > 0)
 		{
-			_drawMaskPattern(p++, startmask, color);
+			write_masked_black(p++, startmask);
 			x += (32 - startbit);
 		}
 		
-		while ( x + 32 <= x2 )
+		while (x + 32 <= x2)
 		{
-			_drawMaskPattern(p++, 0xffffffff, color);
+			write_masked_black(p++, 0xffffffff);
 			x += 32;
 		}
 		
 		if ( endbit > 0 )
-			_drawMaskPattern(p, endmask, color);
+			write_masked_black(p, endmask);
 	}
 }
 
@@ -79,15 +79,15 @@ static inline int32_t slope(float x1, float y1, float x2, float y2, int shift)
 	float dx = x2-x1;
 	float dy = y2-y1;
 	
-	if ( dy < 1 )
-		return (int32_t)(dx * (1<< shift));
+	if (dy < 1)
+		return (int32_t)(dx * (1 << shift));
 	else
-		return (int32_t)(dx / dy * (1<<shift));
+		return (int32_t)(dx / dy * (1 << shift));
 }
 
-void drawLine(uint8_t* bitmap, int rowstride, const float3* p1, const float3* p2, int thick, const uint8_t pattern[8])
+static void draw_black_line(uint8_t* bitmap, int rowstride, const float3* p1, const float3* p2)
 {
-	if ( p1->y > p2->y )
+	if (p1->y > p2->y)
 	{
 		const float3* tmp = p1;
 		p1 = p2;
@@ -97,14 +97,14 @@ void drawLine(uint8_t* bitmap, int rowstride, const float3* p1, const float3* p2
 	int y = (int)p1->y;
 	int endy = (int)p2->y;
 	
-	if ( y >= SCREEN_Y || endy < 0 || min2f(p1->x, p2->x) >= SCREEN_X || max2f(p1->x, p2->x) < 0 )
+	if (y >= SCREEN_Y || endy < 0 || min2f(p1->x, p2->x) >= SCREEN_X || max2f(p1->x, p2->x) < 0)
 		return;
 	
 	int32_t x = (int32_t)(p1->x * (1<<16));
 	int32_t dx = slope(p1->x, p1->y, p2->x, p2->y, 16);
 	float py = p1->y;
 	
-	if ( y < 0 )
+	if (y < 0)
 	{
 		x += (int32_t)(-p1->y * dx);
 		y = 0;
@@ -113,20 +113,17 @@ void drawLine(uint8_t* bitmap, int rowstride, const float3* p1, const float3* p2
 
 	int32_t x1 = (int32_t)(x + dx * (y+1-py));
 
-	while ( y <= endy )
+	while (y <= endy)
 	{
-		uint8_t p = pattern[y%8];
-		uint32_t color = (p<<24) | (p<<16) | (p<<8) | p;
-		
-		if ( y == endy )
+		if (y == endy)
 			x1 = (int32_t)(p2->x * (1<<16));
 		
-		if ( dx < 0 )
-			drawFragment((uint32_t*)&bitmap[y*rowstride], x1>>16, (x>>16) + thick, color);
+		if (dx < 0)
+			draw_black_fragment((uint32_t*)&bitmap[y * rowstride], x1 >> 16, (x >> 16) + 1);
 		else
-			drawFragment((uint32_t*)&bitmap[y*rowstride], x>>16, (x1>>16) + thick, color);
-		
-		if ( ++y == SCREEN_Y )
+			draw_black_fragment((uint32_t*)&bitmap[y * rowstride], x >> 16, (x1 >> 16) + 1);
+
+		if (++y == SCREEN_Y)
 			break;
 
 		x = x1;
@@ -241,10 +238,9 @@ static void draw_triangle(uint8_t* bitmap, int rowstride, const float3* p1, cons
 
 	if (draw_flags & MeshDrawFlag_Wire)
 	{
-		const uint8_t* pattern = (const uint8_t*)&patterns[0];
-		if (wire_flags & 1) drawLine(bitmap, rowstride, p1, p2, 1, pattern);
-		if (wire_flags & 2) drawLine(bitmap, rowstride, p2, p3, 1, pattern);
-		if (wire_flags & 4) drawLine(bitmap, rowstride, p3, p1, 1, pattern);
+		if (wire_flags & 1) draw_black_line(bitmap, rowstride, p1, p2);
+		if (wire_flags & 2) draw_black_line(bitmap, rowstride, p2, p3);
+		if (wire_flags & 4) draw_black_line(bitmap, rowstride, p3, p1);
 	}
 }
 
@@ -478,7 +474,7 @@ void scene_draw(Scene* scene, uint8_t* buffer, int rowstride, enum SceneDrawFlag
 			view_a.y = view_a.y * scene_scale / view_a.z + proj_add_y;
 			view_b.x = view_b.x * scene_scale / view_b.z + proj_add_x;
 			view_b.y = view_b.y * scene_scale / view_b.z + proj_add_y;
-			drawLine(buffer, rowstride, &view_a, &view_b, 1, patterns[0]);
+			draw_black_line(buffer, rowstride, &view_a, &view_b);
 		}
 	}
 	scene->line_count = 0; // clear lines each frame
