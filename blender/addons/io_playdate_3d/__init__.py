@@ -1,11 +1,11 @@
 
 bl_info = {
-    "name": "Playdate Render3D format",
+    "name": "Playdate PlayDators format",
     "author": "Aras Pranckevicius",
     "version": (1, 0, 0),
     "blender": (4, 5, 0),
     "location": "File > Export",
-    "description": "Exports scene for Playdate Render3D toy engine",
+    "description": "Exports scene for Playdate PlayDators toy engine",
     "category": "Import-Export",
 }
 
@@ -213,8 +213,8 @@ def export_file(filepath, *, visible_only=True, selected_only=False, local_space
         report({'INFO'}, f"Exported {total_vertices} verts, {total_tris} tris, {frame_count} frames -> {os.path.basename(filepath)}")
     return {'FINISHED'}
 
-class EXPORT_OT_playdate_render3d(Operator, ExportHelper):
-    bl_idname = "export_scene.playdate_render3d"
+class EXPORT_OT_playdators(Operator, ExportHelper):
+    bl_idname = "export_scene.playdators"
     bl_label = "Export Playdate"
     bl_options = {'PRESET'}
 
@@ -313,16 +313,16 @@ class EXPORT_OT_playdate_render3d(Operator, ExportHelper):
         )
 
 def menu_func_export(self, context):
-    self.layout.operator(EXPORT_OT_playdate_render3d.bl_idname,
-                         text="Playdate Render 3D (.pdm)")
+    self.layout.operator(EXPORT_OT_playdators.bl_idname,
+                         text="Playdate PlayDators (.pdm)")
 
 def register():
-    bpy.utils.register_class(EXPORT_OT_playdate_render3d)
+    bpy.utils.register_class(EXPORT_OT_playdators)
     bpy.types.TOPBAR_MT_file_export.append(menu_func_export)
 
 def unregister():
     bpy.types.TOPBAR_MT_file_export.remove(menu_func_export)
-    bpy.utils.unregister_class(EXPORT_OT_playdate_render3d)
+    bpy.utils.unregister_class(EXPORT_OT_playdators)
 
 if __name__ == "__main__":
     register()

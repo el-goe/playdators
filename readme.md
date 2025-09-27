@@ -1,4 +1,4 @@
-﻿# Playdate 3D rasterizer testbed
+﻿# PlayDators - toy 3D engine for Playdate
 
 ### Current Status
 
