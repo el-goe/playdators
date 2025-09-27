@@ -1,6 +1,7 @@
 #include "draw_style.h"
 #include "render.h"
 #include "platform.h"
+#include "util/adjacency_generator.h"
 #include "util/radixsort.h"
 #include <string.h>
 
@@ -236,7 +237,7 @@ static void draw_triangle(uint8_t* bitmap, int rowstride, const float3* p1, cons
 	}
 	//@TODO: draw_tri_checker via some flag/option
 
-	if (draw_flags & MeshDrawFlag_Wire)
+	if (draw_flags & (MeshDrawFlag_Wire | MeshDrawFlag_SilhouetteWire))
 	{
 		if (wire_flags & 1) draw_black_line(bitmap, rowstride, p1, p2);
 		if (wire_flags & 2) draw_black_line(bitmap, rowstride, p2, p3);
@@ -261,10 +262,16 @@ static inline uint32_t pack_depth_index(float z, uint32_t index)
 	return bits.u;
 }
 
+static bool is_face_visible(const Scene* scene, uint16_t fi)
+{
+	return (fi != 0xFFFF) && (scene->tmp_vis_tris_mask[fi >> 5] & (1 << (fi & 31)));
+}
+
 static void draw_mesh_instance(Scene* scene, uint8_t* buffer, int rowstride, const MeshInstance* inst, enum SceneDrawFlags scene_draw_flags)
 {
-	const Mesh* mesh = inst->mesh;
+	Mesh* mesh = inst->mesh;
 	const xform* matrix = &inst->tr;
+	const bool use_silhouette = inst->flags & MeshDrawFlag_SilhouetteWire;
 
 	// temporary buffers
 	if (scene->tmp_points_cap < mesh->vertex_count) {
@@ -278,6 +285,23 @@ static void draw_mesh_instance(Scene* scene, uint8_t* buffer, int rowstride, con
 		plat_free(scene->tmp_order_table2);
 		scene->tmp_order_table1 = plat_malloc(scene->order_cap * sizeof(scene->tmp_order_table1[0]));
 		scene->tmp_order_table2 = plat_malloc(scene->order_cap * sizeof(scene->tmp_order_table2[0]));
+	}
+	if (use_silhouette) {
+		// initially mark all triangles as not visible if we're rendering with silhouette edges
+		int mesh_tri_mask_count = ((mesh->tri_count * 3) + 31) >> 5;
+		if (scene->vis_tris_mask_cap < mesh_tri_mask_count) {
+			scene->vis_tris_mask_cap = mesh_tri_mask_count;
+			plat_free(scene->tmp_vis_tris_mask);
+			scene->tmp_vis_tris_mask = plat_malloc(scene->vis_tris_mask_cap * sizeof(scene->tmp_vis_tris_mask[0]));
+		}
+		memset(scene->tmp_vis_tris_mask, 0, mesh_tri_mask_count * sizeof(scene->tmp_vis_tris_mask[0]));
+
+		// ensure mesh has adjancency calculated
+		if (!mesh->adjacency)
+		{
+			mesh->adjacency = plat_malloc(mesh->tri_count * 3 * sizeof(uint16_t));
+			generate_adjacency_buffer(mesh->adjacency, mesh->tris, mesh->tri_count * 3);
+		}
 	}
 
 	// transform points
@@ -372,6 +396,9 @@ static void draw_mesh_instance(Scene* scene, uint8_t* buffer, int rowstride, con
 		float z = -(scene->tmp_view_points[idx0].z + scene->tmp_view_points[idx1].z + scene->tmp_view_points[idx2].z);
 		scene->tmp_order_table1[vis_tri_count] = pack_depth_index(z, i);
 
+		// mark triangle as visible if we're rendering with silhouette edges
+		if (use_silhouette)
+			scene->tmp_vis_tris_mask[i >> 5] |= 1u << (i & 31);
 		++vis_tri_count;
 	}
 	scene->stats_visible_tris += vis_tri_count;
@@ -405,7 +432,24 @@ static void draw_mesh_instance(Scene* scene, uint8_t* buffer, int rowstride, con
 		//@TODO: cheap gamma adjust?
 		//brightness = brightness * brightness;
 
-		uint8_t wire_flag = mesh->wire_flags ? mesh->wire_flags[fi] : 0xFF;
+		uint8_t wire_flag = 0xFF;
+		if (inst->flags & MeshDrawFlag_SilhouetteWire)
+		{
+			const uint16_t opf0 = mesh->adjacency[fi * 3 + 0];
+			const uint16_t opf1 = mesh->adjacency[fi * 3 + 1];
+			const uint16_t opf2 = mesh->adjacency[fi * 3 + 2];
+			if (is_face_visible(scene, opf0))
+				wire_flag &= ~4;
+			if (is_face_visible(scene, opf1))
+				wire_flag &= ~2;
+			if (is_face_visible(scene, opf2))
+				wire_flag &= ~1;
+		}
+		else if (inst->flags & MeshDrawFlag_Wire)
+		{
+			if (mesh->wire_flags)
+				wire_flag = mesh->wire_flags[fi];
+		}
 		draw_triangle(buffer, rowstride, &scene->tmp_proj_points[idx0], &scene->tmp_proj_points[idx2], &scene->tmp_proj_points[idx1], brightness, inst->flags, wire_flag, scene_draw_flags);
 	}
 }
@@ -505,15 +549,13 @@ Mesh* mesh_load_from_file(const char* path)
 	}
 	if (header.num_frames == 0)
 		header.num_frames = 1;
-	Mesh* mesh = plat_malloc(sizeof(Mesh));
+	Mesh* mesh = plat_calloc(sizeof(Mesh));
 	mesh->vertex_count = header.num_verts;
 	mesh->vertex_frame_count = header.num_frames;
 	mesh->tri_count = header.num_tris;
 	mesh->bbox_min = header.bbox_min;
 	mesh->bbox_max = header.bbox_max;
 	mesh->center = v3_mulfl(v3_add(mesh->bbox_min, mesh->bbox_max), 0.5f);
-	mesh->flags = 0;
-	mesh->wire_flags = NULL;
 
 	const size_t tri_size = header.num_tris * 3 * sizeof(uint16_t);
 	mesh->tris = plat_malloc(tri_size);
@@ -566,26 +608,17 @@ Mesh* mesh_create(int vertex_count, int frame_count, int tri_count, bool uvs, bo
 	mesh->vertex_count = vertex_count;
 	mesh->vertex_frame_count = frame_count;
 	mesh->tri_count = tri_count;
-	mesh->bbox_min = f3(0,0,0);
-	mesh->bbox_max = f3(0,0,0);
-	mesh->center = f3(0,0,0);
 	mesh->flags = MeshFlag_FloatVertices;
 
 	mesh->tris = plat_calloc(mesh->tri_count * 3 * sizeof(uint16_t));
 	if (uvs)
 		mesh->uvs = plat_calloc(mesh->tri_count * 3 * sizeof(float2));
-	else
-		mesh->uvs = NULL;
 
 	if (colors)
 		mesh->colors = plat_calloc(mesh->tri_count * sizeof(uint8_t));
-	else
-		mesh->colors = NULL;
 
 	if (wire_flags)
 		mesh->wire_flags = plat_calloc(mesh->tri_count * sizeof(uint8_t));
-	else
-		mesh->wire_flags = NULL;
 
 	mesh->vertices = plat_calloc(mesh->vertex_count * mesh->vertex_frame_count * sizeof(float3));
 	return mesh;
@@ -600,5 +633,6 @@ void mesh_free(Mesh* mesh)
 	plat_free(mesh->tris);
 	plat_free(mesh->colors);
 	plat_free(mesh->wire_flags);
+	plat_free(mesh->adjacency);
 	plat_free(mesh);
 }

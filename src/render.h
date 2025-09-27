@@ -7,11 +7,25 @@ enum MeshFlags {
 };
 
 enum MeshDrawFlags {
+	// Draw filled triangle, using per-instance color,
+	// modulated by per-triangle color (if available).
 	MeshDrawFlag_Solid = (1 << 0),
+	// Also modulates with wrapped diffuse lighting.
 	MeshDrawFlag_Lighting = (1 << 1),
+
+	// Draw triangle edges as black lines. If mesh
+	// has wire_flags buffer, this is used to determine
+	// which lines to draw.
 	MeshDrawFlag_Wire = (1 << 2),
 
-	//@TODO: control for pattern vs bluenoise dither?
+	// Draw silhouette edges as black lines.
+	// Silhouette is an edge between a front-facing
+	// and back-facing triangle, or an edge of a visible triangle
+	// that has no neighboring triangles. Mesh triangle adjacency
+	// buffer is calculated upon first rendering of that mesh
+	// with silhouette wires on.
+	MeshDrawFlag_SilhouetteWire = (1 << 3),
+
 	//@TODO: control for UV checker?
 };
 
@@ -30,6 +44,7 @@ typedef struct Mesh {
 	float* uvs; // 6x float per triangle
 	uint8_t* colors; // 1 byte per triangle
 	uint8_t* wire_flags; // one bit per triangle edge, whether wire for it should be drawn
+	uint16_t* adjacency; // 3x entries per triangle, for which triangles are adjacent to them
 	float3 bbox_min;
 	float3 bbox_max;
 	float3 center;
@@ -41,7 +56,7 @@ Mesh* mesh_create(int vertex_count, int frame_count, int tri_count, bool uvs, bo
 void mesh_free(Mesh* mesh);
 
 typedef struct MeshInstance {
-	const Mesh* mesh;
+	Mesh* mesh;
 	xform tr;
 	int frame;
 	enum MeshDrawFlags flags;
@@ -69,6 +84,9 @@ typedef struct Scene
 	int order_cap;
 	uint32_t* tmp_order_table1;
 	uint32_t* tmp_order_table2;
+
+	int vis_tris_mask_cap;
+	uint32_t* tmp_vis_tris_mask;
 
 	int inst_count;
 	int inst_cap;

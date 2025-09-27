@@ -60,6 +60,8 @@ set (DEMO_SOURCES
 	src/rasterizer_scanline.h
 	src/render.c
 	src/render.h
+	src/util/adjacency_generator.c
+	src/util/adjacency_generator.h
 	src/util/pixel_ops.c
 	src/util/pixel_ops.h
 	src/util/radixsort.c

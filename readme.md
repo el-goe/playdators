@@ -24,6 +24,7 @@ Everything I wrote myself is Unlicense / Public Domain. However some 3rd party l
 - Scanline rasterizer is based on Chris Hecker's ["Perspective Texture Mapping" series](https://chrishecker.com/Miscellaneous_Technical_Articles) (1995-1996),
   specifically `SUBAFXFL.CPP`.
 - Modified version of Cameron Hart's [radixsort](https://github.com/bitshifter/radixsort), zlib license.
+- Mesh adjacency calculation based on Arseny Kapoulkine's [meshoptimizer](https://github.com/zeux/meshoptimizer), MIT license.
 - Parts were based on `mini3d` from Playdate SDK examples (Created by Dave Hayden on 10/20/15, Copyright © 2015 Panic, Inc.)
   and on [mini3d-plus](https://github.com/nstbayless/mini3d-plus) (MIT license), but by now I have replaced them.
 - (only on PC): [Sokol](https://github.com/floooh/sokol): sokol_app, sokol_gfx, sokol_time. zlib/libpng license.

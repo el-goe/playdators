@@ -110,6 +110,9 @@ static void init_zoo_scene()
 		go->frame = 0;
 		go->color = 1.0f;
 		go->flags = MeshDrawFlag_Solid | MeshDrawFlag_Lighting;
+		// use silhouette wires for Chocomel
+		if (i == TestMesh_Chocomel)
+			go->flags |= MeshDrawFlag_SilhouetteWire;
 		scene_add_mesh(&s_zoo_scene, go);
 	}
 
