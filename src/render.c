@@ -246,8 +246,9 @@ static inline uint32_t float_flip(uint32_t f)
 static inline uint32_t pack_depth_index(float z, uint32_t index)
 {
 	union { float f; uint32_t u; } bits;
+	// pack depth as FP16 into top bits (flipped negatives so that radix sort ordering works)
 	bits.f = z;
-	//bits.u = float_to_half(z) << 16; //@TODO: might be better precision by putting FP16 into upper bits?
+	bits.u = float_to_half_topbits(z);
 	bits.u = float_flip(bits.u);
 	// put index into lowest 16 bits
 	bits.u = (bits.u & 0xFFFF0000) | index;

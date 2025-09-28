@@ -53,9 +53,14 @@ static inline int highest_bit(uint32_t x)
 #endif
 }
 
-// Based on float_to_half_fast3_rtne from https://gist.github.com/rygorous/2156668
 static inline uint16_t float_to_half(float x)
 {
+#if TARGET_PLAYDATE
+	union { float f; uint32_t u; } bits;
+	asm("vcvtb.f16.f32 %0, %1" : "=t"(bits.f) : "t"(x));
+	return bits.u;
+#else
+	// Based on float_to_half_fast3_rtne from https://gist.github.com/rygorous/2156668
 	typedef union FP32
 	{
 		uint32_t u;
@@ -107,6 +112,18 @@ static inline uint16_t float_to_half(float x)
 
 	o |= sign >> 16;
 	return o;
+#endif
+}
+
+static inline uint32_t float_to_half_topbits(float x)
+{
+#if TARGET_PLAYDATE
+	union { float f; uint32_t u; } bits;
+	asm("vcvtt.f16.f32 %0, %1" : "=t"(bits.f) : "t"(x));
+	return bits.u;
+#else
+	return (uint32_t)float_to_half(x) << 16;
+#endif
 }
 
 // https://en.wikipedia.org/wiki/Fast_inverse_square_root
