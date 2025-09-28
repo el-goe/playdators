@@ -263,6 +263,8 @@ static bool is_face_visible(const Scene* scene, uint16_t fi)
 static void draw_mesh_instance(Scene* scene, uint8_t* buffer, int rowstride, const MeshInstance* inst, enum SceneDrawFlags scene_draw_flags)
 {
 	Mesh* mesh = inst->mesh;
+	if (!mesh)
+		return;
 	const xform* matrix = &inst->tr;
 	const bool use_silhouette = inst->flags & MeshDrawFlag_SilhouetteWire;
 
@@ -479,18 +481,21 @@ void scene_draw(Scene* scene, uint8_t* buffer, int rowstride, enum SceneDrawFlag
 
 	// sort objects by distance
 	const MeshInstance** inst = scene->instances;
+	int valid_inst_count = 0;
 	for (int i = 0; i < scene->inst_count; ++i, ++inst)
 	{
 		const Mesh* mesh = (*inst)->mesh;
+		if (!mesh)
+			continue;
 		float3 center_local = xform_transform_pt(&(*inst)->tr, mesh->center);
 		float3 center = xform_transform_pt(&scene->view_xform, center_local);
 		float z = center.z + (*inst)->sort_bias;
-		scene->tmp_inst_order_table1[i] = pack_depth_index(-z, i);
+		scene->tmp_inst_order_table1[valid_inst_count++] = pack_depth_index(-z, i);
 	}
-	radixsort_upper16keys(scene->tmp_inst_order_table1, scene->tmp_inst_order_table2, scene->inst_count);
+	radixsort_upper16keys(scene->tmp_inst_order_table1, scene->tmp_inst_order_table2, valid_inst_count);
 
 	// draw meshes in the sorted order
-	for (int i = 0; i < scene->inst_count; ++i)
+	for (int i = 0; i < valid_inst_count; ++i)
 	{
 		uint16_t index = scene->tmp_inst_order_table1[i] & 0xFFFF;
 		const MeshInstance* inst = scene->instances[index];
@@ -628,4 +633,12 @@ void mesh_free(Mesh* mesh)
 	plat_free(mesh->wire_flags);
 	plat_free(mesh->adjacency);
 	plat_free(mesh);
+}
+
+void mesh_instance_init(MeshInstance* inst)
+{
+	memset(inst, 0, sizeof(*inst));
+	inst->tr = xform_identity;
+	inst->color = 1.0f;
+	inst->flags = MeshDrawFlag_Solid | MeshDrawFlag_Lighting;
 }

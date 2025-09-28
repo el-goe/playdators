@@ -64,6 +64,8 @@ typedef struct MeshInstance {
 	float sort_bias; // value to add to object distance for sorting (negative pulls to foreground, positive pushes to background)
 } MeshInstance;
 
+void mesh_instance_init(MeshInstance *inst);
+
 typedef struct Scene
 {
 	xform camera_xform;
