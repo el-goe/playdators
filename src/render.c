@@ -11,10 +11,7 @@
 
 FORCE_INLINE void write_masked_black(uint32_t* p, uint32_t mask)
 {
-	if (mask == 0xffffffff)
-		*p = 0;
-	else
-		*p = (*p & ~mask); // " | (color & mask)" but color is always black
+	*p = (*p & ~mask); // " | (color & mask)" but color is always black
 }
 
 static void draw_black_fragment(uint32_t* row, int x1, int x2)
@@ -43,34 +40,29 @@ static void draw_black_fragment(uint32_t* row, int x1, int x2)
 
 	if (col == x2 / 32)
 	{
-		uint32_t mask = 0;
-		
-		if ( startbit > 0 && endbit > 0 )
+		uint32_t mask = 0;		
+		if (startbit > 0 && endbit > 0)
 			mask = startmask & endmask;
-		else if ( startbit > 0 )
+		else if (startbit > 0)
 			mask = startmask;
-		else if ( endbit > 0 )
-			mask = endmask;
-		
+		else if (endbit > 0)
+			mask = endmask;		
 		write_masked_black(p, mask);
 	}
 	else
 	{
-		int x = x1;
-		
+		int x = x1;		
 		if (startbit > 0)
 		{
 			write_masked_black(p++, startmask);
 			x += (32 - startbit);
-		}
-		
+		}		
 		while (x + 32 <= x2)
 		{
 			write_masked_black(p++, 0xffffffff);
 			x += 32;
-		}
-		
-		if ( endbit > 0 )
+		}		
+		if (endbit > 0)
 			write_masked_black(p, endmask);
 	}
 }
