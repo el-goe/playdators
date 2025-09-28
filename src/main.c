@@ -60,18 +60,6 @@ static bool load_meshes()
 	return true;
 }
 
-// --------------------------------------------------------------------
-//  mesh zoo scene
-
-static MeshInstance s_zoo_objects[TestMeshCount];
-static Mesh* s_zoo_mesh_ground;
-static MeshInstance s_zoo_obj_ground;
-static Scene s_zoo_scene;
-static float s_zoo_cam_dist = 3.0f;
-static float3 s_zoo_cam_target = { 0,0,0 };
-static float3 s_zoo_obj_pos[TestMeshCount];
-static bool s_zoo_bluenoise = false;
-
 static int s_choco_cur_anim = 0;
 static int s_choco_cur_anim_start = 0;
 #define CHOCOMEL_ANIM_COUNT 5
@@ -83,6 +71,36 @@ static int s_choco_anim_table[CHOCOMEL_ANIM_COUNT + 1] = {
 	80, // dig
 	110,
 };
+
+static int calc_chocomel_anim_frame(float cur_time)
+{
+	// set chocomel animation frame
+	const int cur_frame_idx = (int)(cur_time * 24.0f / 2.0f);
+	// Right: swich animation clip
+	if (G.buttons_pressed & kPlatButtonRight)
+	{
+		s_choco_cur_anim++;
+		if (s_choco_cur_anim >= CHOCOMEL_ANIM_COUNT)
+			s_choco_cur_anim = 0;
+		s_choco_cur_anim_start = cur_frame_idx;
+	}
+
+	const int anim_frames = s_choco_anim_table[s_choco_cur_anim + 1] - s_choco_anim_table[s_choco_cur_anim];
+	const int frame = (cur_frame_idx - s_choco_cur_anim_start) % anim_frames;
+	return s_choco_anim_table[s_choco_cur_anim] + frame;
+}
+
+
+// --------------------------------------------------------------------
+//  mesh zoo scene
+
+static MeshInstance s_zoo_objects[TestMeshCount];
+static Mesh* s_zoo_mesh_ground;
+static MeshInstance s_zoo_obj_ground;
+static Scene s_zoo_scene;
+static float s_zoo_cam_dist = 3.0f;
+static float3 s_zoo_obj_pos[TestMeshCount];
+static bool s_zoo_bluenoise = false;
 
 static void init_zoo_scene()
 {
@@ -199,29 +217,20 @@ static void update_zoo_scene()
 	G.statval1 = s_zoo_scene.stats_visible_tris;
 	G.statval2 = 0;
 
-	// set chocomel animation frame
-	const int cur_frame_idx = (int)(cur_time * 24.0f / 2.0f);
-	// B: swich animation clip
-	if (G.buttons_pressed & kPlatButtonB)
-	{
-		s_choco_cur_anim++;
-		if (s_choco_cur_anim >= CHOCOMEL_ANIM_COUNT)
-			s_choco_cur_anim = 0;
-		s_choco_cur_anim_start = cur_frame_idx;
-	}
+	s_zoo_objects[TestMesh_Chocomel].frame = calc_chocomel_anim_frame(cur_time);
 
-	const int anim_frames = s_choco_anim_table[s_choco_cur_anim + 1] - s_choco_anim_table[s_choco_cur_anim];
-	const int frame = (cur_frame_idx - s_choco_cur_anim_start) % anim_frames;
-	s_zoo_objects[TestMesh_Chocomel].frame = s_choco_anim_table[s_choco_cur_anim] + frame;
-
-	// A: toggle bluenoise vs pattern
-	if (G.buttons_pressed & kPlatButtonA)
+	// Left: toggle bluenoise vs pattern
+	if (G.buttons_pressed & kPlatButtonLeft)
 		s_zoo_bluenoise = !s_zoo_bluenoise;
 }
 
 // --------------------------------------------------------------------
 //  move along a curve scene
 
+static Scene s_curve_scene;
+static Mesh* s_curve_mesh;
+static MeshInstance s_curve_obj;
+static MeshInstance s_curve_obj_choco;
 
 // Lissajous curve that repeats across t=0..1 range, result -20..+20 range.
 static float3 lissajous_curve(float t)
@@ -249,10 +258,11 @@ static void lissajous_curve_frame(float t, float3 *out_pos, float3 *out_prev, fl
 
 static void init_curve_scene()
 {
-	//@TODO
-	{
-		// Lissajous curve
+	scene_init(&s_curve_scene);
+	scene_setLight(&s_curve_scene, f3(-1.0f, 1.0f, -0.1f));
 
+	// curve mesh
+	{
 		int len_segments = 600;
 		Mesh* m = mesh_create(2 * len_segments, 1, len_segments * 4, false, true, true);
 		float3* dst_pos = (float3*)m->vertices;
@@ -292,38 +302,29 @@ static void init_curve_scene()
 			dst_col += 4;
 			dst_wire += 4;
 		}
-		/*
-		s_meshes[7] = m;
-		s_objects[7].mesh = m;
-		s_objects[7].tr = xform_make_translate(0.0f, 0.0f, 0.0f);
-		s_objects[7].frame = 0;
-		s_objects[7].sort_bias = 1000.0f;
-		s_objects[7].color = 1.0f;
-		s_objects[7].flags = MeshDrawFlag_Solid | MeshDrawFlag_Wire | MeshDrawFlag_Lighting;
-		*/
+		s_curve_mesh = m;
+		s_curve_obj.mesh = m;
+		s_curve_obj.tr = xform_identity;
+		s_curve_obj.frame = 0;
+		s_curve_obj.sort_bias = 1000.0f;
+		s_curve_obj.color = 1.0f;
+		s_curve_obj.flags = MeshDrawFlag_Solid | MeshDrawFlag_Wire | MeshDrawFlag_Lighting;
+		scene_add_mesh(&s_curve_scene, &s_curve_obj);
 	}
 
-
 	// chocomel
-	//scene_add_mesh(&s_scene, &s_objects[0]);
-	// curve
-	//scene_add_mesh(&s_scene, &s_objects[7]);
+	{
+		s_curve_obj_choco.mesh = s_meshes[TestMesh_Chocomel];
+		s_curve_obj_choco.tr = xform_identity;
+		s_curve_obj_choco.frame = 0;
+		s_curve_obj_choco.color = 1.0f;
+		s_curve_obj_choco.flags = MeshDrawFlag_Solid | MeshDrawFlag_SilhouetteWire | MeshDrawFlag_Lighting;
+		scene_add_mesh(&s_curve_scene, &s_curve_obj_choco);
+	}
 }
 
 static void update_curve_scene()
 {
-#if 0
-	if (G.buttons_cur & kPlatButtonUp)
-	{
-		s_cam_dist *= 0.9f;
-		s_cam_dist = max2f(0.3f, s_cam_dist);
-	}
-	if (G.buttons_cur & kPlatButtonDown)
-	{
-		s_cam_dist *= 1.1f;
-		s_cam_dist = min2f(5.0f, s_cam_dist);
-	}
-
 	// time moves along the curve
 
 	//static float time_offset = 0;
@@ -336,45 +337,34 @@ static void update_curve_scene()
 	float3 cpos, cpos_prev, cpos_next, cside;
 	lissajous_curve_frame(cam_t, &cpos, &cpos_prev, &cpos_next, &cside);
 	float3 cup = v3_normalize(v3_cross(cside, v3_sub(cpos_next, cpos)));
-	float3 cam_pos = v3_add(cpos, cup);
-	scene_setCamera(&s_scene, cam_pos, cpos_next, 1.0f, cup);
 
 	float obj_t = cam_t + 0.003f;
 	float3 obj_pos, obj_pos_prev, obj_pos_next, obj_side;
 	lissajous_curve_frame(obj_t, &obj_pos, &obj_pos_prev, &obj_pos_next, &obj_side);
 	float3 obj_up = v3_normalize(v3_cross(obj_side, v3_sub(obj_pos_next, obj_pos)));
+	// Crank: rotate chocomel
 	xform obj_rot = xform_make_axis_angle(G.crank_angle_rad, f3(0, 1, 0));
 	xform obj_tr = xform_look_at(obj_pos, cpos, obj_up);
 	obj_tr = xform_multiply(&obj_tr, &obj_rot);
 
-	s_objects[5].tr = obj_tr;
-	s_objects[0].tr = obj_tr;
+	float3 cam_pos = v3_add(cpos, cup);
+	cam_pos = v3_add(cam_pos, v3_mulfl(cside, 2.0f));
+	float3 cam_target = v3_add(obj_pos, v3_mulfl(obj_up, 0.5f));
+	scene_setCamera(&s_curve_scene, cam_pos, cam_target, 1.0f, cup);
+
+	s_curve_obj_choco.tr = obj_tr;
 
 	//scene_add_line(&s_scene, obj_tr.pos, v3_add(obj_tr.pos, obj_tr.ay));
 
 	// draw
 	plat_gfx_clear(kSolidColorWhite);
+	scene_draw(&s_curve_scene, G.framebuffer, G.framebuffer_stride, 0);
 
-	scene_draw(&s_scene, G.framebuffer, G.framebuffer_stride);
-
-	G.statval1 = 0;
+	G.statval1 = s_curve_scene.stats_visible_tris;
 	G.statval2 = 0;
 
 	const float cur_time = plat_time_get();
-	const int cur_frame_idx = (int)(cur_time * 24.0f / 2.0f);
-
-	if (G.buttons_pressed & kPlatButtonB)
-	{
-		s_cur_anim++;
-		if (s_cur_anim >= ANIM_COUNT)
-			s_cur_anim = 0;
-		s_cur_anim_start = cur_frame_idx;
-	}
-
-	const int anim_frames = s_anim_table[s_cur_anim + 1] - s_anim_table[s_cur_anim];
-	const int frame = (cur_frame_idx - s_cur_anim_start) % anim_frames;
-	s_objects[0].frame = s_anim_table[s_cur_anim] + frame;
-#endif
+	s_curve_obj_choco.frame = calc_chocomel_anim_frame(cur_time);
 }
 
 void app_initialize()
@@ -385,6 +375,8 @@ void app_initialize()
 	init_zoo_scene();
 	init_curve_scene();
 }
+
+static bool s_cur_scene_zoo = false;
 
 void app_update()
 {
@@ -402,7 +394,14 @@ void app_update()
 	G.framebuffer = plat_gfx_get_frame();
 	G.framebuffer_stride = SCREEN_STRIDE_BYTES;
 
-	update_zoo_scene();
+	// A: switch between scenes
+	if (G.buttons_pressed & kPlatButtonA)
+		s_cur_scene_zoo = !s_cur_scene_zoo;
+
+	if (s_cur_scene_zoo)
+		update_zoo_scene();
+	else
+		update_curve_scene();
 
 	// draw FPS, stats
 #if SHOW_STATS
