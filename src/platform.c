@@ -740,27 +740,33 @@ static void sapp_onevent(const sapp_event* evt)
 	if (evt->type == SAPP_EVENTTYPE_KEY_DOWN)
 	{
 		if (evt->key_code == SAPP_KEYCODE_LEFT) {
-			s_but_pushed |= kPlatButtonLeft;
+			if (!(s_but_current & kPlatButtonLeft))
+				s_but_pushed |= kPlatButtonLeft;
 			s_but_current |= kPlatButtonLeft;
 		}
 		if (evt->key_code == SAPP_KEYCODE_RIGHT) {
-			s_but_pushed |= kPlatButtonRight;
+			if (!(s_but_current & kPlatButtonRight))
+				s_but_pushed |= kPlatButtonRight;
 			s_but_current |= kPlatButtonRight;
 		}
 		if (evt->key_code == SAPP_KEYCODE_UP) {
-			s_but_pushed |= kPlatButtonUp;
+			if (!(s_but_current & kPlatButtonUp))
+				s_but_pushed |= kPlatButtonUp;
 			s_but_current |= kPlatButtonUp;
 		}
 		if (evt->key_code == SAPP_KEYCODE_DOWN) {
-			s_but_pushed |= kPlatButtonDown;
+			if (!(s_but_current & kPlatButtonDown))
+				s_but_pushed |= kPlatButtonDown;
 			s_but_current |= kPlatButtonDown;
 		}
 		if (evt->key_code == SAPP_KEYCODE_A) {
-			s_but_pushed |= kPlatButtonA;
+			if (!(s_but_current & kPlatButtonA))
+				s_but_pushed |= kPlatButtonA;
 			s_but_current |= kPlatButtonA;
 		}
 		if (evt->key_code == SAPP_KEYCODE_B) {
-			s_but_pushed |= kPlatButtonB;
+			if (!(s_but_current & kPlatButtonB))
+				s_but_pushed |= kPlatButtonB;
 			s_but_current |= kPlatButtonB;
 		}
 		if (evt->key_code == SAPP_KEYCODE_ESCAPE) {
