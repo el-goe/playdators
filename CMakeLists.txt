@@ -175,6 +175,21 @@ else()
 		${CMAKE_CURRENT_SOURCE_DIR}/Source/snow_piles.pdm
 		${CMAKE_CURRENT_SOURCE_DIR}/Source/snowman.pdm
 		${CMAKE_CURRENT_SOURCE_DIR}/Source/traffic_cone.pdm
+		${CMAKE_CURRENT_SOURCE_DIR}/Source/img_0.png
+		${CMAKE_CURRENT_SOURCE_DIR}/Source/img_1.png
+		${CMAKE_CURRENT_SOURCE_DIR}/Source/img_2.png
+		${CMAKE_CURRENT_SOURCE_DIR}/Source/img_3.png
+		${CMAKE_CURRENT_SOURCE_DIR}/Source/img_4.png
+		${CMAKE_CURRENT_SOURCE_DIR}/Source/img_5.png
+		${CMAKE_CURRENT_SOURCE_DIR}/Source/img_6.png
+		${CMAKE_CURRENT_SOURCE_DIR}/Source/img_7.png
+		${CMAKE_CURRENT_SOURCE_DIR}/Source/img_8.png
+		${CMAKE_CURRENT_SOURCE_DIR}/Source/img_9.png
+		${CMAKE_CURRENT_SOURCE_DIR}/Source/img_dig.png
+		${CMAKE_CURRENT_SOURCE_DIR}/Source/img_finished.png
+		${CMAKE_CURRENT_SOURCE_DIR}/Source/img_instructions.png
+		${CMAKE_CURRENT_SOURCE_DIR}/Source/img_move.png
+		${CMAKE_CURRENT_SOURCE_DIR}/Source/img_percent.png
         $<TARGET_FILE_DIR:${PLAYDATE_GAME_NAME}>/${DATA_DIR}
 	)
 
