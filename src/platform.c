@@ -220,6 +220,10 @@ int eventHandler(PlaydateAPI* pd, PDSystemEvent event, uint32_t arg)
 #include "external/sokol/sokol_time.h"
 #include "external/sokol/sokol_glue.h"
 
+#define STB_IMAGE_IMPLEMENTATION
+#define STBI_ONLY_PNG
+#include "external/stb_image.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -385,10 +389,6 @@ static char s_data_path[1000];
 
 PlatBitmap* plat_gfx_load_bitmap(const char* file_path, const char** outerr)
 {
-	*outerr = "";
-	return NULL;
-
-	/*
 	char path[1000];
 	snprintf(path, sizeof(path), "%s/%s", s_data_path, file_path);
 	size_t path_len = strlen(path);
@@ -400,7 +400,6 @@ PlatBitmap* plat_gfx_load_bitmap(const char* file_path, const char** outerr)
 	int comp;
 	res->ga = stbi_load(path, &res->width, &res->height, &comp, 2);
 	return res;
-	*/
 }
 
 void plat_gfx_draw_bitmap(PlatBitmap* bitmap, int x, int y)
