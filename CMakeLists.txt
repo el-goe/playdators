@@ -164,11 +164,6 @@ else()
 		${CMAKE_CURRENT_SOURCE_DIR}/Source/boulder_001.pdm
 		${CMAKE_CURRENT_SOURCE_DIR}/Source/boulder_002.pdm
 		${CMAKE_CURRENT_SOURCE_DIR}/Source/boulder_007.pdm
-		${CMAKE_CURRENT_SOURCE_DIR}/Source/boulder_small_001.pdm
-		${CMAKE_CURRENT_SOURCE_DIR}/Source/boulder_small_002.pdm
-		${CMAKE_CURRENT_SOURCE_DIR}/Source/boulder_small_003.pdm
-		${CMAKE_CURRENT_SOURCE_DIR}/Source/bug_hotel.pdm
-		${CMAKE_CURRENT_SOURCE_DIR}/Source/camping_table.pdm
 		${CMAKE_CURRENT_SOURCE_DIR}/Source/chocomel_merged.pdm
 		${CMAKE_CURRENT_SOURCE_DIR}/Source/fence.pdm
 		${CMAKE_CURRENT_SOURCE_DIR}/Source/log_003.pdm

@@ -12,17 +12,12 @@ enum TestMeshes {
 	TestMesh_Boulder001,
 	TestMesh_Boulder002,
 	TestMesh_Boulder007,
-	TestMesh_BugHotel,
 	TestMesh_Chocomel,
-	TestMesh_CampingTable,
 	TestMesh_Fence,
 	TestMesh_Log003,
 	TestMesh_SnowPiles,
 	TestMesh_Snowman,
 	TestMesh_TrafficCone,
-	TestMesh_BoulderSmall001,
-	TestMesh_BoulderSmall002,
-	TestMesh_BoulderSmall003,
 	TestMeshCount
 };
 
@@ -30,17 +25,12 @@ static const char* kTestMeshesNames[TestMeshCount] = {
 	"boulder_001.pdm",
 	"boulder_002.pdm",
 	"boulder_007.pdm",
-	"bug_hotel.pdm",
 	"chocomel_merged.pdm",
-	"camping_table.pdm",
 	"fence.pdm",
 	"log_003.pdm",
 	"snow_piles.pdm",
 	"snowman.pdm",
 	"traffic_cone.pdm",
-	"boulder_small_001.pdm",
-	"boulder_small_002.pdm",
-	"boulder_small_003.pdm",
 };
 
 static Mesh* s_meshes[TestMeshCount];
@@ -116,136 +106,6 @@ static void choco_anim_update(MeshInstance* inst)
 	inst->frame = s_choco_anim_table[s_choco_cur_anim] + frame;
 }
 
-// --------------------------------------------------------------------
-//  mesh zoo scene
-
-static MeshInstance s_zoo_objects[TestMeshCount];
-static Mesh* s_zoo_mesh_ground;
-static MeshInstance s_zoo_obj_ground;
-static Scene s_zoo_scene;
-static float s_zoo_cam_dist = 3.0f;
-static float3 s_zoo_obj_pos[TestMeshCount];
-static bool s_zoo_bluenoise = false;
-
-static void init_zoo_scene()
-{
-	scene_init(&s_zoo_scene);
-	scene_setLight(&s_zoo_scene, f3(-1.0f, 1.0f, -0.1f));
-
-	int columns = (int)sqrtf(TestMeshCount);
-	float spacing = 3.0f;
-	float min_x = 0, max_x = 0;
-	float min_z = 0, max_z = 0;
-	for (int i = 0; i < TestMeshCount; ++i)
-	{
-		int i_col = i % columns;
-		int i_row = i / columns;
-		MeshInstance* go = &s_zoo_objects[i];
-		mesh_instance_init(go);
-		go->mesh = s_meshes[i];
-		float x = ((float)i_col - (columns - 1) * 0.5f) * spacing;
-		float z = ((float)i_row - (columns - 1) * 0.5f) * spacing;
-		min_x = min2f(min_x, x);
-		max_x = max2f(max_x, x);
-		min_z = min2f(min_z, z);
-		max_z = max2f(max_z, z);
-		go->tr.pos = s_zoo_obj_pos[i] = f3(x, 0, z);
-		// use silhouette wires for Chocomel
-		if (i == TestMesh_Chocomel)
-			go->flags |= MeshDrawFlag_SilhouetteWire;
-		scene_add_mesh(&s_zoo_scene, go);
-	}
-
-	// procedural ground plane mesh
-	{
-		float padding = 1.5f;
-		int grid_min_x = (int)floorf(min_x - padding);
-		int grid_max_x = (int)ceilf(max_x + padding);
-		int grid_min_z = (int)floorf(min_z - padding);
-		int grid_max_z = (int)ceilf(max_z + padding);
-		int grid_seg_x = grid_max_x - grid_min_x;
-		int grid_seg_z = grid_max_z - grid_min_z;
-		Mesh* m = mesh_create((grid_seg_x + 1) * (grid_seg_z + 1), 1, grid_seg_x * grid_seg_z * 2, false, true, false);
-		float3* dst = (float3*)m->vertices;
-		for (int tz = grid_min_z; tz <= grid_max_z; tz++) {
-			for (int tx = grid_min_x; tx <= grid_max_x; tx++) {
-				dst->x = (float)tx;
-				dst->y = 0.0f;
-				dst->z = (float)tz;
-				dst++;
-			}
-		}
-		for (int tz = 0; tz < grid_seg_z; ++tz) {
-			for (int tx = 0; tx < grid_seg_x; ++tx) {
-				int qidx = tz * grid_seg_x + tx;
-				int base = tz * (grid_seg_x + 1) + tx;
-				m->tris[qidx * 6 + 0] = base;
-				m->tris[qidx * 6 + 1] = base + grid_seg_x + 1 + 1;
-				m->tris[qidx * 6 + 2] = base + 1;
-				m->tris[qidx * 6 + 3] = base;
-				m->tris[qidx * 6 + 4] = base + grid_seg_x + 1;
-				m->tris[qidx * 6 + 5] = base + grid_seg_x + 1 + 1;
-				m->colors[qidx * 2 + 0] = m->colors[qidx * 2 + 1] = ((tz ^ tx) & 1) ? 240 : 20;
-			}
-		}
-		s_zoo_mesh_ground = m;
-		mesh_instance_init(&s_zoo_obj_ground);
-		s_zoo_obj_ground.mesh = m;
-		s_zoo_obj_ground.sort_bias = 100.0f;
-		scene_add_mesh(&s_zoo_scene, &s_zoo_obj_ground);
-	}
-}
-
-static void update_zoo_scene()
-{
-	// up/down: move camera distance
-	if (G.buttons_cur & kPlatButtonUp)
-	{
-		s_zoo_cam_dist *= 0.9f;
-		s_zoo_cam_dist = max2f(0.3f, s_zoo_cam_dist);
-	}
-	if (G.buttons_cur & kPlatButtonDown)
-	{
-		s_zoo_cam_dist *= 1.1f;
-		s_zoo_cam_dist = min2f(10.0f, s_zoo_cam_dist);
-	}
-
-	// rotate objects
-	const float cur_time = G.t_cur;
-	for (int i = 0; i < TestMeshCount; ++i)
-	{
-		float angle = (float)i + cur_time * 0.1f;
-		xform tr = xform_make_axis_angle(angle, f3(0,1,0));
-		tr.pos = s_zoo_obj_pos[i];
-		s_zoo_objects[i].tr = tr;
-	}
-
-	// crank: orbit the camera
-	float cangle = G.crank_angle_rad + 0.3f;
-	float cs = cosf(cangle);
-	float ss = sinf(cangle);
-	scene_setCamera(&s_zoo_scene, f3(cs * s_zoo_cam_dist, 2.0f, ss * s_zoo_cam_dist), f3(0, 0.5f, 0), 1.0f, f3(0, 1, 0));
-
-	// draw
-	plat_gfx_clear(kSolidColorWhite);
-	enum SceneDrawFlags draw_flags = 0;
-	if (s_zoo_bluenoise)
-		draw_flags |= SceneDrawFlag_DitherBluenoise;
-	scene_draw(&s_zoo_scene, G.framebuffer, G.framebuffer_stride, draw_flags);
-
-	G.statval1 = s_zoo_scene.stats_visible_tris;
-	G.statval2 = 0;
-
-	choco_anim_update(&s_zoo_objects[TestMesh_Chocomel]);
-
-	// Left: toggle bluenoise vs pattern
-	if (G.buttons_pressed & kPlatButtonLeft)
-		s_zoo_bluenoise = !s_zoo_bluenoise;
-}
-
-// --------------------------------------------------------------------
-//  move along a curve scene
-
 static float s_start_time;
 static float s_finish_time;
 static Scene s_curve_scene;
@@ -259,6 +119,8 @@ static float s_jump_height;
 static float s_jump_velocity;
 static float s_blocked_by_obstacle_start = -1.0f;
 static int s_obstacle_counter = 0;
+static bool s_draw_bluenoise = false;
+
 
 static PlatBitmap* s_img_instructions;
 static PlatBitmap* s_img_move;
@@ -406,6 +268,7 @@ static ObstacleDesc k_obstacle_desc[] = {
 	{TestMesh_Boulder002, 2.0f, M_PIf},
 	{TestMesh_Boulder007, 2.0f, M_PIf},
 	{TestMesh_Log003, 3.0f, M_PIf * 0.1f},
+	{TestMesh_Snowman, 3.0f, M_PIf},
 	{TestMesh_SnowPiles, 1.0f, M_PIf},
 	{TestMesh_TrafficCone, 1.0f, M_PIf},
 };
@@ -558,7 +421,10 @@ static void update_curve_scene()
 
 	// draw
 	plat_gfx_clear(kSolidColorWhite);
-	scene_draw(&s_curve_scene, G.framebuffer, G.framebuffer_stride, 0);
+	enum SceneDrawFlags draw_flags = 0;
+	if (s_draw_bluenoise)
+		draw_flags |= SceneDrawFlag_DitherBluenoise;
+	scene_draw(&s_curve_scene, G.framebuffer, G.framebuffer_stride, draw_flags);
 
 	// images
 	// draw score when finished
@@ -623,6 +489,10 @@ static void update_curve_scene()
 		draw_and_advance_img(&x, y, s_img_percent);
 	}
 
+	// A: toggle bluenoise vs pattern
+	if (G.buttons_pressed & kPlatButtonA)
+		s_draw_bluenoise = !s_draw_bluenoise;
+
 	// stats
 	G.statval1 = s_curve_scene.stats_visible_tris;
 	G.statval2 = 0;
@@ -634,11 +504,8 @@ void app_initialize()
 	init_pixel_ops();
 	if (!load_meshes())
 		return;
-	init_zoo_scene();
 	init_curve_scene();
 }
-
-static bool s_cur_scene_zoo = false;
 
 void app_update()
 {
@@ -661,14 +528,7 @@ void app_update()
 	G.framebuffer = plat_gfx_get_frame();
 	G.framebuffer_stride = SCREEN_STRIDE_BYTES;
 
-	// A: switch between scenes
-	if (G.buttons_pressed & kPlatButtonA)
-		s_cur_scene_zoo = !s_cur_scene_zoo;
-
-	if (s_cur_scene_zoo)
-		update_zoo_scene();
-	else
-		update_curve_scene();
+	update_curve_scene();
 
 	// draw FPS, stats
 #if SHOW_STATS
