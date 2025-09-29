@@ -5,6 +5,7 @@
 #include "platform.h"
 #include "render.h"
 #include "util/pixel_ops.h"
+#include <string.h>
 
 #define SHOW_STATS 1
 
@@ -105,9 +106,6 @@ static bool load_images()
 
 // ======== Game state
 
-
-
-
 enum ChocomelAnims {
 	ChocoAnimIdleSit,
 	ChocoAnimIdle,
@@ -116,11 +114,41 @@ enum ChocomelAnims {
 	ChocoAnimDig,
 	ChocoAnimCount
 };
-static enum ChocomelAnims s_choco_cur_anim = ChocoAnimIdleSit;
-static int s_choco_cur_anim_start = 0;
-static float s_dig_start = -1.0f;
-static float s_idle_start = -1.0f;
-static int s_choco_anim_table[ChocoAnimCount + 1] = {
+
+typedef struct GameState
+{
+	enum ChocomelAnims choco_cur_anim;
+	int choco_cur_anim_start;
+	float t_idle_start;
+
+	float t_game_start;
+	float t_game_finish;
+
+	float curve_t;
+
+	float move_speed;
+
+	float jump_cur_height;
+	float jump_cur_velocity;
+
+	float t_blocked_start;
+	int obstacle_counter;
+} GameState;
+
+static GameState GS;
+
+static void game_state_init()
+{
+	memset(&GS, 0, sizeof(GS));
+	GS.choco_cur_anim = ChocoAnimIdleSit;
+	GS.t_idle_start = -1.0f;
+	GS.t_game_start = -1.0f;
+	GS.t_game_finish = -1.0f;
+	GS.t_blocked_start = -1.0f;
+	GS.curve_t = 0.001f;
+}
+
+static const int s_choco_anim_table[ChocoAnimCount + 1] = {
 	0, // idle sitting
 	54, // idle
 	60, // walk
@@ -128,56 +156,47 @@ static int s_choco_anim_table[ChocoAnimCount + 1] = {
 	80, // dig
 	110,
 };
+
 static void choco_anim_start(enum ChocomelAnims anim)
 {
-	if (anim == s_choco_cur_anim)
+	if (anim == GS.choco_cur_anim)
 		return;
-
-	// handle dig states
-	s_dig_start = (anim == ChocoAnimDig) ? G.t_cur : -1.0f;
 
 	// handle idle states
 	if (anim != ChocoAnimIdle && anim != ChocoAnimIdleSit)
 	{
 		// switching to non-idle animation
-		s_idle_start = -1.0f;
+		GS.t_idle_start = -1.0f;
 	}
 	else
 	{
 		// starting one of idle animations; if current one is not idle then remember
 		// idle start time
-		if (s_choco_cur_anim != ChocoAnimIdle && s_choco_cur_anim != ChocoAnimIdleSit)
+		if (GS.choco_cur_anim != ChocoAnimIdle && GS.choco_cur_anim != ChocoAnimIdleSit)
 		{
-			s_idle_start = G.t_cur;
+			GS.t_idle_start = G.t_cur;
 		}
 	}
-	s_choco_cur_anim = anim;
+	GS.choco_cur_anim = anim;
 
 	const int cur_frame_idx = (int)(G.t_cur * 24.0f / 2.0f);
-	s_choco_cur_anim_start = cur_frame_idx;
+	GS.choco_cur_anim_start = cur_frame_idx;
 }
+
 static void choco_anim_update(MeshInstance* inst)
 {
 	const int cur_frame_idx = (int)(G.t_cur * 24.0f / 2.0f);
-	const int anim_frames = s_choco_anim_table[s_choco_cur_anim + 1] - s_choco_anim_table[s_choco_cur_anim];
-	const int frame = (cur_frame_idx - s_choco_cur_anim_start) % anim_frames;
-	inst->frame = s_choco_anim_table[s_choco_cur_anim] + frame;
+	const int anim_frames = s_choco_anim_table[GS.choco_cur_anim + 1] - s_choco_anim_table[GS.choco_cur_anim];
+	const int frame = (cur_frame_idx - GS.choco_cur_anim_start) % anim_frames;
+	inst->frame = s_choco_anim_table[GS.choco_cur_anim] + frame;
 }
 
-static float s_start_time;
-static float s_finish_time;
-static Scene s_curve_scene;
-static Mesh* s_curve_mesh;
-static MeshInstance s_curve_obj;
-static MeshInstance s_curve_obj_choco;
-static MeshInstance s_curve_obj_gate;
-static float s_cur_t;
-static float s_move_speed;
-static float s_jump_height;
-static float s_jump_velocity;
-static float s_blocked_by_obstacle_start = -1.0f;
-static int s_obstacle_counter = 0;
-static bool s_draw_bluenoise = false;
+Scene s_curve_scene;
+Mesh* s_curve_mesh;
+MeshInstance s_curve_obj;
+MeshInstance s_curve_obj_choco;
+MeshInstance s_curve_obj_gate;
+static bool s_draw_bluenoise;
 
 typedef struct CurveObstacle
 {
@@ -215,11 +234,11 @@ static xform lissajous_curve_frame(float t)
 	return tr;
 }
 
-static void init_curve_scene()
+static void game_initialize()
 {
+	game_state_init();
 	scene_init(&s_curve_scene);
 	scene_setLight(&s_curve_scene, f3(-1.0f, 1.0f, -0.1f));
-	s_cur_t = 0.001f;
 
 	// curve mesh
 	{
@@ -284,6 +303,7 @@ static void init_curve_scene()
 	}
 
 	// start/finish gate
+	//@TODO: hide it when not close to start/finish
 	{
 		mesh_instance_init(&s_curve_obj_gate);
 		s_curve_obj_gate.mesh = s_meshes[GameMesh_Fence];
@@ -312,12 +332,12 @@ static ObstacleDesc k_obstacle_desc[] = {
 
 static void update_curve_obstacle(CurveObstacle* ob, bool digging)
 {
-	if (ob->health <= 0.0f || ob->curve_t + 0.003f < s_cur_t)
+	if (ob->health <= 0.0f || ob->curve_t + 0.003f < GS.curve_t)
 	{
 		// spawn a new one
-		++s_obstacle_counter;
+		++GS.obstacle_counter;
 		ob->time_start = G.t_cur;
-		ob->curve_t = s_cur_t + 0.020f + RandomFloat01(&G.rng) * 0.050f;
+		ob->curve_t = GS.curve_t + 0.020f + RandomFloat01(&G.rng) * 0.050f;
 		uint32_t ob_index = XorShift32(&G.rng) % OBSTACLE_DESC_COUNT;
 		ob->inst.mesh = s_meshes[k_obstacle_desc[ob_index].mesh];
 		ob->health = k_obstacle_desc[ob_index].health;
@@ -351,26 +371,49 @@ static void draw_and_advance_img(int* x, int y, PlatBitmap* img)
 	int ww, hh;
 	plat_gfx_get_bitmap_size(img, &ww, &hh);
 	plat_gfx_draw_bitmap(img, *x, y);
-	*x += ww;
+	*x -= ww;
 }
 
-static void update_curve_scene()
+static void draw_number(int number, int x, int y)
+{
+	do {
+		int digit = number % 10;
+		number /= 10;
+		draw_and_advance_img(&x, y, s_images[GameImage_0 + digit]);
+	} while (number > 0);
+}
+
+static void update_game()
 {
 	const float k_run_speed = 0.6f;
 
-	const bool is_finished = s_cur_t >= 0.999f;
+	// Game not started yet: any button starts
+	if ((GS.t_game_start < 0.0f) && G.buttons_pressed)
+	{
+		GS.t_game_start = G.t_cur;
+	}
+
+	// Determine if game is finished yet
+	const bool is_finished = GS.curve_t >= 0.999f;
+	if (is_finished)
+	{
+		if (GS.t_game_finish <= 0.0f)
+			GS.t_game_finish = G.t_cur - GS.t_game_start;
+		if (G.buttons_pressed) // any button restarts the game
+			game_state_init();
+	}
 
 	// Chocomel movement
 	// Right: change move speed
 	if ((G.buttons_cur & kPlatButtonRight) && !is_finished)
-		s_move_speed += 0.7f * G.t_dt;
+		GS.move_speed += 0.7f * G.t_dt;
 	else
-		s_move_speed -= 0.3f * G.t_dt;
-	s_move_speed = clamp_f(s_move_speed, 0.0f, 1.0f);
+		GS.move_speed -= 0.3f * G.t_dt;
+	GS.move_speed = clamp_f(GS.move_speed, 0.0f, 1.0f);
 
 	// Determine distance to obstacle
 	float cur_dist2_to_obs = 1000.0f;
-	if (s_curve_obstacle.health > 0.0f && s_curve_obstacle.curve_t > s_cur_t)
+	if (s_curve_obstacle.health > 0.0f && s_curve_obstacle.curve_t > GS.curve_t)
 	{
 		cur_dist2_to_obs = v3_lensq(v3_sub(s_curve_obj_choco.tr.pos, s_curve_obstacle.orig_pos));
 	}
@@ -379,65 +422,65 @@ static void update_curve_scene()
 	bool is_obstacle = cur_dist2_to_obs < dist_for_stop * dist_for_stop;
 
 	// Up: jump
-	if (s_move_speed >= k_run_speed && (G.buttons_cur & kPlatButtonUp) && s_jump_height <= 0.0f && !is_obstacle && !is_finished)
+	if (GS.move_speed >= k_run_speed && (G.buttons_cur & kPlatButtonUp) && GS.jump_cur_height <= 0.0f && !is_obstacle && !is_finished)
 	{
-		s_jump_velocity = 3.0f;
+		GS.jump_cur_velocity = 3.0f;
 	}
 	const float k_jump_gravity = 6.0f;
-	s_jump_velocity -= G.t_dt * k_jump_gravity;
-	s_jump_velocity = clamp_f(s_jump_velocity, -20.0f, 20.0f);
-	s_jump_height += s_jump_velocity * G.t_dt;
-	s_jump_height = clamp_f(s_jump_height, 0.0f, 10.0f);
+	GS.jump_cur_velocity -= G.t_dt * k_jump_gravity;
+	GS.jump_cur_velocity = clamp_f(GS.jump_cur_velocity, -20.0f, 20.0f);
+	GS.jump_cur_height += GS.jump_cur_velocity * G.t_dt;
+	GS.jump_cur_height = clamp_f(GS.jump_cur_height, 0.0f, 10.0f);
 
 
-	if (s_jump_height > obs_height)
+	if (GS.jump_cur_height > obs_height)
 		is_obstacle = false; // we are jumping over the obstacle, ignore it
 
 	// Is there an obstacle in front? Do not move, and allow dig to start
 	bool do_dig = false;
 	if (is_obstacle && !is_finished)
 	{
-		if (s_blocked_by_obstacle_start < 0.0f)
-			s_blocked_by_obstacle_start = G.t_cur;
+		if (GS.t_blocked_start < 0.0f)
+			GS.t_blocked_start = G.t_cur;
 
-		s_move_speed = 0.0f;
+		GS.move_speed = 0.0f;
 		// B: dig
 		if (G.buttons_cur & kPlatButtonB)
 			do_dig = true;
 	}
 	else
 	{
-		s_blocked_by_obstacle_start = -1.0f;
+		GS.t_blocked_start = -1.0f;
 	}
 
 	// Move based on current speed
-	s_cur_t += s_move_speed * G.t_dt * 0.01f;
+	GS.curve_t += GS.move_speed * G.t_dt * 0.01f;
 
 	// Switch to appropriate animation
-	if (s_jump_height > 0.0f)
+	if (GS.jump_cur_height > 0.0f)
 		choco_anim_start(ChocoAnimTrot);
 	else if (do_dig)
 		choco_anim_start(ChocoAnimDig);
-	else if (s_move_speed >= k_run_speed)
+	else if (GS.move_speed >= k_run_speed)
 		choco_anim_start(ChocoAnimTrot);
-	else if (s_move_speed >= 0.01f)
+	else if (GS.move_speed >= 0.01f)
 		choco_anim_start(ChocoAnimWalk);
 	else
 	{
-		if ((s_idle_start >= 0.0f && G.t_cur - s_idle_start > 2.0f) || s_choco_cur_anim == ChocoAnimIdleSit)
+		if ((GS.t_idle_start >= 0.0f && G.t_cur - GS.t_idle_start > 2.0f) || GS.choco_cur_anim == ChocoAnimIdleSit)
 			choco_anim_start(ChocoAnimIdleSit);
 		else
 			choco_anim_start(ChocoAnimIdle);
 	}
 
-	xform tr_cur_t = lissajous_curve_frame(s_cur_t);
-	xform tr_cam_target = lissajous_curve_frame(s_cur_t + 0.002f);
+	xform tr_cur_t = lissajous_curve_frame(GS.curve_t);
+	xform tr_cam_target = lissajous_curve_frame(GS.curve_t + 0.002f);
 
 	update_curve_obstacles(do_dig);
 	choco_anim_update(&s_curve_obj_choco);
 
 	xform obj_tr = tr_cur_t;
-	obj_tr.pos = v3_add(obj_tr.pos, v3_mulfl(obj_tr.ay, s_jump_height));
+	obj_tr.pos = v3_add(obj_tr.pos, v3_mulfl(obj_tr.ay, GS.jump_cur_height));
 
 	// Crank: orbit camera
 	float cam_dist = 2.7f;
@@ -463,65 +506,48 @@ static void update_curve_scene()
 	scene_draw(&s_curve_scene, G.framebuffer, G.framebuffer_stride, draw_flags);
 
 	// images
-	// draw score when finished
+	// "finished" label
 	if (is_finished)
 	{
-		if (s_finish_time <= 0.0f)
-		{
-			s_finish_time = G.t_cur - s_start_time;
-		}
+		int x = SCREEN_X - 3;
+		int y = SCREEN_Y - 14;
 		int ww, hh;
 		plat_gfx_get_bitmap_size(s_images[GameImage_Finished], &ww, &hh);
-		plat_gfx_draw_bitmap(s_images[GameImage_Finished], SCREEN_X / 2, SCREEN_Y / 2 - hh / 2);
-
-		int total_time = (int)(s_finish_time - s_start_time);
-		int dig_1000 = (total_time / 1000) % 10;
-		int dig_100 = (total_time / 100) % 10;
-		int dig_10 = (total_time / 10) % 10;
-		int dig_1 = total_time % 10;
-		int x = SCREEN_X / 2;
-		int y = SCREEN_Y / 2 + hh / 2;
-		if (total_time >= 1000)
-			draw_and_advance_img(&x, y, s_images[GameImage_0 + dig_1000]);
-		if (total_time >= 100)
-			draw_and_advance_img(&x, y, s_images[GameImage_0 + dig_100]);
-		if (total_time >= 10)
-			draw_and_advance_img(&x, y, s_images[GameImage_0 + dig_10]);
-		draw_and_advance_img(&x, y, s_images[GameImage_0 + dig_1]);
+		plat_gfx_draw_bitmap(s_images[GameImage_Finished], x - ww, y);
 	}
-	// draw instructions when we're at start
-	else if (s_cur_t < 0.002f)
+	// draw instructions when game has not started yet
+	else if (GS.t_game_start < 0.0f)
 	{
 		int ww, hh;
 		plat_gfx_get_bitmap_size(s_images[GameImage_Instructions], &ww, &hh);
 		plat_gfx_draw_bitmap(s_images[GameImage_Instructions], SCREEN_X / 2, SCREEN_Y / 2 - hh / 2);
 	}
 	// draw "dig" on first obstacle, or if we're stuck on an obstacle for a bit
-	else if (!do_dig && s_blocked_by_obstacle_start >= 0.0f && (s_obstacle_counter == 1 || G.t_cur - s_blocked_by_obstacle_start > 3.0f))
+	else if (!do_dig && GS.t_blocked_start >= 0.0f && (GS.obstacle_counter == 1 || G.t_cur - GS.t_blocked_start > 3.0f))
 	{
 		plat_gfx_draw_bitmap(s_images[GameImage_Dig], SCREEN_X / 2, SCREEN_Y / 2);
 	}
 	// draw "move" if idling for a while
-	else if (s_idle_start >= 0.0f && (G.t_cur - s_idle_start > 3.0f))
+	else if (GS.t_idle_start >= 0.0f && (G.t_cur - GS.t_idle_start > 3.0f))
 	{
 		plat_gfx_draw_bitmap(s_images[GameImage_Move], SCREEN_X / 2, SCREEN_Y / 2);
 	}
 
-	// percentage of track finished yet
-	if (!is_finished)
+	// draw percentage of track finished yet
+	if (GS.t_game_start >= 0.0f && !is_finished)
 	{
-		int percent = clamp_i((int)(s_cur_t * 100.0f + 0.5f), 0, 100);
-		int dig_100 = (percent / 100) % 10;
-		int dig_10 = (percent / 10) % 10;
-		int dig_1 = percent % 10;
-		int x = 2;
-		int y = SCREEN_Y - (12 + 2);
-		if (percent >= 100)
-			draw_and_advance_img(&x, y, s_images[GameImage_0 + dig_100]);
-		if (percent >= 10)
-			draw_and_advance_img(&x, y, s_images[GameImage_0 + dig_10]);
-		draw_and_advance_img(&x, y, s_images[GameImage_0 + dig_1]);
+		int percent = clamp_i((int)(GS.curve_t * 100.0f + 0.5f), 0, 100);
+		int x = SCREEN_X - 15;
+		int y = SCREEN_Y - 14;
 		draw_and_advance_img(&x, y, s_images[GameImage_Percent]);
+		draw_number(percent, x, y);
+	}
+
+	// draw current/final score
+	if (GS.t_game_start >= 0.0f)
+	{
+		const int score = (int)((is_finished ? GS.t_game_finish : G.t_cur) - GS.t_game_start);
+		draw_number(score, SCREEN_X - 15, SCREEN_Y - 28);
 	}
 
 	// A: toggle bluenoise vs pattern
@@ -541,7 +567,7 @@ void app_initialize()
 		return;
 	if (!load_images())
 		return;
-	init_curve_scene();
+	game_initialize();
 }
 
 void app_update()
@@ -565,7 +591,7 @@ void app_update()
 	G.framebuffer = plat_gfx_get_frame();
 	G.framebuffer_stride = SCREEN_STRIDE_BYTES;
 
-	update_curve_scene();
+	update_game();
 
 	// draw FPS, stats
 #if SHOW_STATS
