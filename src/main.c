@@ -303,7 +303,6 @@ static void game_initialize()
 	}
 
 	// start/finish gate
-	//@TODO: hide it when not close to start/finish
 	{
 		mesh_instance_init(&s_curve_obj_gate);
 		s_curve_obj_gate.mesh = s_meshes[GameMesh_Fence];
@@ -497,6 +496,13 @@ static void update_game()
 	//scene_add_line(&s_curve_scene, tr_curve_t.pos, v3_add(tr_curve_t.pos, tr_curve_t.ax));
 	//scene_add_line(&s_curve_scene, tr_curve_t.pos, v3_add(tr_curve_t.pos, tr_curve_t.ay));
 	//scene_add_line(&s_curve_scene, tr_curve_t.pos, v3_add(tr_curve_t.pos, tr_curve_t.az));
+
+	// only show gate mesh when close to start/finish (otherwise in the middle of the track
+	// it can be wrongly sorted w.r.t. curve itself).
+	if (GS.curve_t < 0.02f || GS.curve_t > 0.98f)
+		s_curve_obj_gate.mesh = s_meshes[GameMesh_Fence];
+	else
+		s_curve_obj_gate.mesh = NULL;
 
 	// draw
 	plat_gfx_clear(kSolidColorWhite);
