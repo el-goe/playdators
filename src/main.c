@@ -8,20 +8,21 @@
 
 #define SHOW_STATS 1
 
-enum TestMeshes {
-	TestMesh_Boulder001,
-	TestMesh_Boulder002,
-	TestMesh_Boulder007,
-	TestMesh_Chocomel,
-	TestMesh_Fence,
-	TestMesh_Log003,
-	TestMesh_SnowPiles,
-	TestMesh_Snowman,
-	TestMesh_TrafficCone,
-	TestMeshCount
-};
+// ======== Meshes used by the game
 
-static const char* kTestMeshesNames[TestMeshCount] = {
+enum GameMesh {
+	GameMesh_Boulder001,
+	GameMesh_Boulder002,
+	GameMesh_Boulder007,
+	GameMesh_Chocomel,
+	GameMesh_Fence,
+	GameMesh_Log003,
+	GameMesh_SnowPiles,
+	GameMesh_Snowman,
+	GameMesh_TrafficCone,
+	GameMeshCount // keep last
+};
+static const char* kGameMeshNames[GameMeshCount] = {
 	"boulder_001.pdm",
 	"boulder_002.pdm",
 	"boulder_007.pdm",
@@ -32,23 +33,80 @@ static const char* kTestMeshesNames[TestMeshCount] = {
 	"snowman.pdm",
 	"traffic_cone.pdm",
 };
-
-static Mesh* s_meshes[TestMeshCount];
-
+static Mesh* s_meshes[GameMeshCount];
 static bool load_meshes()
 {
-	for (int i = 0; i < TestMeshCount; ++i)
+	for (int i = 0; i < GameMeshCount; ++i)
 	{
-		Mesh* m = mesh_load_from_file(kTestMeshesNames[i]);
+		Mesh* m = mesh_load_from_file(kGameMeshNames[i]);
 		if (!m)
 		{
-			plat_sys_log_error("Error: failed to load mesh %s", kTestMeshesNames[i]);
+			plat_sys_log_error("Error: failed to load mesh %s", kGameMeshNames[i]);
 			return false;
 		}
 		s_meshes[i] = m;
 	}
 	return true;
 }
+
+// ======== Images used by the game
+
+enum GameImage {
+	GameImage_0,
+	GameImage_1,
+	GameImage_2,
+	GameImage_3,
+	GameImage_4,
+	GameImage_5,
+	GameImage_6,
+	GameImage_7,
+	GameImage_8,
+	GameImage_9,
+	GameImage_Dig,
+	GameImage_Finished,
+	GameImage_Instructions,
+	GameImage_Move,
+	GameImage_Percent,
+	GameImageCount // keep last
+};
+static const char* kGameImageNames[GameImageCount] = {
+	"img_0.pdi",
+	"img_1.pdi",
+	"img_2.pdi",
+	"img_3.pdi",
+	"img_4.pdi",
+	"img_5.pdi",
+	"img_6.pdi",
+	"img_7.pdi",
+	"img_8.pdi",
+	"img_9.pdi",
+	"img_dig.pdi",
+	"img_finished.pdi",
+	"img_instructions.pdi",
+	"img_move.pdi",
+	"img_percent.pdi",
+};
+static PlatBitmap* s_images[GameImageCount];
+static bool load_images()
+{
+	for (int i = 0; i < GameImageCount; ++i)
+	{
+		char* err;
+		PlatBitmap* b = plat_gfx_load_bitmap(kGameImageNames[i], &err);
+		if (!b)
+		{
+			plat_sys_log_error("Error: failed to load image %s: %s", kGameImageNames[i], err);
+			return false;
+		}
+		s_images[i] = b;
+	}
+	return true;
+}
+
+// ======== Game state
+
+
+
 
 enum ChocomelAnims {
 	ChocoAnimIdleSit,
@@ -121,14 +179,6 @@ static float s_blocked_by_obstacle_start = -1.0f;
 static int s_obstacle_counter = 0;
 static bool s_draw_bluenoise = false;
 
-
-static PlatBitmap* s_img_instructions;
-static PlatBitmap* s_img_move;
-static PlatBitmap* s_img_dig;
-static PlatBitmap* s_img_finished;
-static PlatBitmap* s_img_percent;
-static PlatBitmap* s_img_digits[10];
-
 typedef struct CurveObstacle
 {
 	MeshInstance inst;
@@ -170,20 +220,6 @@ static void init_curve_scene()
 	scene_init(&s_curve_scene);
 	scene_setLight(&s_curve_scene, f3(-1.0f, 1.0f, -0.1f));
 	s_cur_t = 0.001f;
-
-	// load images
-	const char* img_err = NULL;
-	s_img_instructions = plat_gfx_load_bitmap("img_instructions.pdi", &img_err);
-	s_img_dig = plat_gfx_load_bitmap("img_dig.pdi", &img_err);
-	s_img_move = plat_gfx_load_bitmap("img_move.pdi", &img_err);
-	s_img_finished = plat_gfx_load_bitmap("img_finished.pdi", &img_err);
-	s_img_percent = plat_gfx_load_bitmap("img_percent.pdi", &img_err);
-	for (int i = 0; i < 10; ++i)
-	{
-		char name_digit[] = "img_0.pdi";
-		name_digit[4] = '0' + i;
-		s_img_digits[i] = plat_gfx_load_bitmap(name_digit, &img_err);
-	}
 
 	// curve mesh
 	{
@@ -235,7 +271,7 @@ static void init_curve_scene()
 	// chocomel
 	{
 		mesh_instance_init(&s_curve_obj_choco);
-		s_curve_obj_choco.mesh = s_meshes[TestMesh_Chocomel];
+		s_curve_obj_choco.mesh = s_meshes[GameMesh_Chocomel];
 		s_curve_obj_choco.flags |= MeshDrawFlag_SilhouetteWire;
 		scene_add_mesh(&s_curve_scene, &s_curve_obj_choco);
 	}
@@ -250,7 +286,7 @@ static void init_curve_scene()
 	// start/finish gate
 	{
 		mesh_instance_init(&s_curve_obj_gate);
-		s_curve_obj_gate.mesh = s_meshes[TestMesh_Fence];
+		s_curve_obj_gate.mesh = s_meshes[GameMesh_Fence];
 		s_curve_obj_gate.flags |= MeshDrawFlag_SilhouetteWire;
 		s_curve_obj_gate.tr = lissajous_curve_frame(0.0f);
 		scene_add_mesh(&s_curve_scene, &s_curve_obj_gate);
@@ -258,19 +294,19 @@ static void init_curve_scene()
 }
 
 typedef struct ObstacleDesc {
-	enum TestMeshes mesh;
+	enum GameMesh mesh;
 	float health;
 	float max_rotation;
 } ObstacleDesc;
 
 static ObstacleDesc k_obstacle_desc[] = {
-	{TestMesh_Boulder001, 2.0f, M_PIf},
-	{TestMesh_Boulder002, 2.0f, M_PIf},
-	{TestMesh_Boulder007, 2.0f, M_PIf},
-	{TestMesh_Log003, 3.0f, M_PIf * 0.1f},
-	{TestMesh_Snowman, 3.0f, M_PIf},
-	{TestMesh_SnowPiles, 1.0f, M_PIf},
-	{TestMesh_TrafficCone, 1.0f, M_PIf},
+	{GameMesh_Boulder001, 2.0f, M_PIf},
+	{GameMesh_Boulder002, 2.0f, M_PIf},
+	{GameMesh_Boulder007, 2.0f, M_PIf},
+	{GameMesh_Log003, 3.0f, M_PIf * 0.1f},
+	{GameMesh_Snowman, 3.0f, M_PIf},
+	{GameMesh_SnowPiles, 1.0f, M_PIf},
+	{GameMesh_TrafficCone, 1.0f, M_PIf},
 };
 #define OBSTACLE_DESC_COUNT (sizeof(k_obstacle_desc) / sizeof(k_obstacle_desc[0]))
 
@@ -435,8 +471,8 @@ static void update_curve_scene()
 			s_finish_time = G.t_cur - s_start_time;
 		}
 		int ww, hh;
-		plat_gfx_get_bitmap_size(s_img_finished, &ww, &hh);
-		plat_gfx_draw_bitmap(s_img_finished, SCREEN_X / 2, SCREEN_Y / 2 - hh / 2);
+		plat_gfx_get_bitmap_size(s_images[GameImage_Finished], &ww, &hh);
+		plat_gfx_draw_bitmap(s_images[GameImage_Finished], SCREEN_X / 2, SCREEN_Y / 2 - hh / 2);
 
 		int total_time = (int)(s_finish_time - s_start_time);
 		int dig_1000 = (total_time / 1000) % 10;
@@ -446,47 +482,46 @@ static void update_curve_scene()
 		int x = SCREEN_X / 2;
 		int y = SCREEN_Y / 2 + hh / 2;
 		if (total_time >= 1000)
-			draw_and_advance_img(&x, y, s_img_digits[dig_1000]);
+			draw_and_advance_img(&x, y, s_images[GameImage_0 + dig_1000]);
 		if (total_time >= 100)
-			draw_and_advance_img(&x, y, s_img_digits[dig_100]);
+			draw_and_advance_img(&x, y, s_images[GameImage_0 + dig_100]);
 		if (total_time >= 10)
-			draw_and_advance_img(&x, y, s_img_digits[dig_10]);
-		draw_and_advance_img(&x, y, s_img_digits[dig_1]);
-
+			draw_and_advance_img(&x, y, s_images[GameImage_0 + dig_10]);
+		draw_and_advance_img(&x, y, s_images[GameImage_0 + dig_1]);
 	}
 	// draw instructions when we're at start
 	else if (s_cur_t < 0.002f)
 	{
 		int ww, hh;
-		plat_gfx_get_bitmap_size(s_img_instructions, &ww, &hh);
-		plat_gfx_draw_bitmap(s_img_instructions, SCREEN_X / 2, SCREEN_Y / 2 - hh / 2);
+		plat_gfx_get_bitmap_size(s_images[GameImage_Instructions], &ww, &hh);
+		plat_gfx_draw_bitmap(s_images[GameImage_Instructions], SCREEN_X / 2, SCREEN_Y / 2 - hh / 2);
 	}
 	// draw "dig" on first obstacle, or if we're stuck on an obstacle for a bit
 	else if (!do_dig && s_blocked_by_obstacle_start >= 0.0f && (s_obstacle_counter == 1 || G.t_cur - s_blocked_by_obstacle_start > 3.0f))
 	{
-		plat_gfx_draw_bitmap(s_img_dig, SCREEN_X / 2, SCREEN_Y / 2);
+		plat_gfx_draw_bitmap(s_images[GameImage_Dig], SCREEN_X / 2, SCREEN_Y / 2);
 	}
 	// draw "move" if idling for a while
 	else if (s_idle_start >= 0.0f && (G.t_cur - s_idle_start > 3.0f))
 	{
-		plat_gfx_draw_bitmap(s_img_move, SCREEN_X / 2, SCREEN_Y / 2);
+		plat_gfx_draw_bitmap(s_images[GameImage_Move], SCREEN_X / 2, SCREEN_Y / 2);
 	}
 
 	// percentage of track finished yet
 	if (!is_finished)
 	{
 		int percent = clamp_i((int)(s_cur_t * 100.0f + 0.5f), 0, 100);
-		int dig_100 = percent / 100;
+		int dig_100 = (percent / 100) % 10;
 		int dig_10 = (percent / 10) % 10;
 		int dig_1 = percent % 10;
 		int x = 2;
 		int y = SCREEN_Y - (12 + 2);
 		if (percent >= 100)
-			draw_and_advance_img(&x, y, s_img_digits[dig_100]);
+			draw_and_advance_img(&x, y, s_images[GameImage_0 + dig_100]);
 		if (percent >= 10)
-			draw_and_advance_img(&x, y, s_img_digits[dig_10]);
-		draw_and_advance_img(&x, y, s_img_digits[dig_1]);
-		draw_and_advance_img(&x, y, s_img_percent);
+			draw_and_advance_img(&x, y, s_images[GameImage_0 + dig_10]);
+		draw_and_advance_img(&x, y, s_images[GameImage_0 + dig_1]);
+		draw_and_advance_img(&x, y, s_images[GameImage_Percent]);
 	}
 
 	// A: toggle bluenoise vs pattern
@@ -503,6 +538,8 @@ void app_initialize()
 	G.rng = 1;
 	init_pixel_ops();
 	if (!load_meshes())
+		return;
+	if (!load_images())
 		return;
 	init_curve_scene();
 }
