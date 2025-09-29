@@ -53,6 +53,7 @@ void plat_time_reset();
 
 void plat_input_get_buttons(PlatButtons* current, PlatButtons* pushed, PlatButtons* released);
 float plat_input_get_crank_angle_rad();
+float plat_input_get_crank_delta_angle_rad();
 
 
 void plat_sys_log_error(const char* fmt, ...);

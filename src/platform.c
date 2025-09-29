@@ -178,6 +178,11 @@ float plat_input_get_crank_angle_rad()
 	return s_pd->system->getCrankAngle() * (3.14159265358979323846f / 180.0f);
 }
 
+float plat_input_get_crank_delta_angle_rad()
+{
+	return s_pd->system->getCrankChange() * (3.14159265358979323846f / 180.0f);
+}
+
 static int eventUpdate(void* userdata)
 {
 	app_update();
@@ -517,10 +522,18 @@ void plat_input_get_buttons(PlatButtons* current, PlatButtons* pushed, PlatButto
 }
 
 static float s_crank_angle = 0.0f;
+static float s_crank_delta_angle = 0.0f;
 
 float plat_input_get_crank_angle_rad()
 {
 	return s_crank_angle;
+}
+
+float plat_input_get_crank_delta_angle_rad()
+{
+	float res = s_crank_delta_angle;
+	s_crank_delta_angle = 0.0f;
+	return res;
 }
 
 // sokol_app setup
@@ -802,7 +815,9 @@ static void sapp_onevent(const sapp_event* evt)
 	}
 	if (evt->type == SAPP_EVENTTYPE_MOUSE_SCROLL)
 	{
-		s_crank_angle += evt->scroll_y * 0.03f;
+		float delta = evt->scroll_y * 0.03f;
+		s_crank_delta_angle += delta;
+		s_crank_angle += delta;
 		s_crank_angle = fmodf(s_crank_angle, 3.14159265f * 2.0f);
 	}
 }
