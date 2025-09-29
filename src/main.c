@@ -92,7 +92,7 @@ static bool load_images()
 {
 	for (int i = 0; i < GameImageCount; ++i)
 	{
-		char* err;
+		const char* err;
 		PlatBitmap* b = plat_gfx_load_bitmap(kGameImageNames[i], &err);
 		if (!b)
 		{
@@ -133,6 +133,8 @@ typedef struct GameState
 
 	float t_blocked_start;
 	int obstacle_counter;
+
+	float cam_adjust_angle;
 } GameState;
 
 static GameState GS;
@@ -482,8 +484,13 @@ static void update_game()
 	obj_tr.pos = v3_add(obj_tr.pos, v3_mulfl(obj_tr.ay, GS.jump_cur_height));
 
 	// Crank: orbit camera
+	float delta_crank = G.crank_delta_angle_rad * 0.5f;
+	delta_crank = clamp_f(delta_crank, -M_PIf * 0.9f, M_PIf * 0.9f);
+	GS.cam_adjust_angle += delta_crank;
+	GS.cam_adjust_angle = clamp_f(GS.cam_adjust_angle, -M_PIf * 0.9f, M_PIf * 0.9f);
+	GS.cam_adjust_angle *= 0.95f;
 	float cam_dist = 2.7f;
-	float cam_angle = 0.42f + G.crank_angle_rad;
+	float cam_angle = 0.42f + GS.cam_adjust_angle;
 
 	float3 cam_pos = v3_add(tr_cam_target.pos, tr_cam_target.ay);
 	cam_pos = v3_add(cam_pos, v3_mulfl(tr_cam_target.ax, cosf(cam_angle) * cam_dist));
@@ -593,6 +600,7 @@ void app_update()
 	G.buttons_cur = btCur;
 	G.buttons_pressed = btPushed;
 	G.crank_angle_rad = plat_input_get_crank_angle_rad();
+	G.crank_delta_angle_rad = plat_input_get_crank_delta_angle_rad();
 
 	G.framebuffer = plat_gfx_get_frame();
 	G.framebuffer_stride = SCREEN_STRIDE_BYTES;
