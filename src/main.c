@@ -265,6 +265,15 @@ static float s_cur_t;
 static float s_move_speed;
 static float s_jump_height;
 static float s_jump_velocity;
+static float s_blocked_by_obstacle_start = -1.0f;
+static int s_obstacle_counter = 0;
+
+static PlatBitmap* s_img_instructions;
+static PlatBitmap* s_img_move;
+static PlatBitmap* s_img_dig;
+static PlatBitmap* s_img_finished;
+static PlatBitmap* s_img_percent;
+static PlatBitmap* s_img_digits[10];
 
 typedef struct CurveObstacle
 {
@@ -307,6 +316,20 @@ static void init_curve_scene()
 	scene_init(&s_curve_scene);
 	scene_setLight(&s_curve_scene, f3(-1.0f, 1.0f, -0.1f));
 	s_cur_t = 0.001f;
+
+	// load images
+	const char* img_err = NULL;
+	s_img_instructions = plat_gfx_load_bitmap("img_instructions.pdi", &img_err);
+	s_img_dig = plat_gfx_load_bitmap("img_dig.pdi", &img_err);
+	s_img_move = plat_gfx_load_bitmap("img_move.pdi", &img_err);
+	s_img_finished = plat_gfx_load_bitmap("img_finished.pdi", &img_err);
+	s_img_percent = plat_gfx_load_bitmap("img_percent.pdi", &img_err);
+	for (int i = 0; i < 10; ++i)
+	{
+		char name_digit[] = "img_0.pdi";
+		name_digit[4] = '0' + i;
+		s_img_digits[i] = plat_gfx_load_bitmap(name_digit, &img_err);
+	}
 
 	// curve mesh
 	{
@@ -401,6 +424,7 @@ static void update_curve_obstacle(CurveObstacle* ob, bool digging)
 	if (ob->health <= 0.0f || ob->curve_t + 0.003f < s_cur_t)
 	{
 		// spawn a new one
+		++s_obstacle_counter;
 		ob->time_start = G.t_cur;
 		ob->curve_t = s_cur_t + 0.020f + RandomFloat01(&G.rng) * 0.050f;
 		uint32_t ob_index = XorShift32(&G.rng) % OBSTACLE_DESC_COUNT;
@@ -431,6 +455,14 @@ static void update_curve_obstacles(bool digging)
 	update_curve_obstacle(&s_curve_obstacle, digging);
 }
 
+static void draw_and_advance_img(int* x, int y, PlatBitmap* img)
+{
+	int ww, hh;
+	plat_gfx_get_bitmap_size(img, &ww, &hh);
+	plat_gfx_draw_bitmap(img, *x, y);
+	*x += ww;
+}
+
 static void update_curve_scene()
 {
 	const float k_run_speed = 0.6f;
@@ -458,7 +490,7 @@ static void update_curve_scene()
 	{
 		s_jump_velocity = 3.0f;
 	}
-	const float k_jump_gravity = 3.0f;
+	const float k_jump_gravity = 6.0f;
 	s_jump_velocity -= G.t_dt * k_jump_gravity;
 	s_jump_velocity = clamp_f(s_jump_velocity, -20.0f, 20.0f);
 	s_jump_height += s_jump_velocity * G.t_dt;
@@ -467,14 +499,22 @@ static void update_curve_scene()
 
 	if (s_jump_height > obs_height)
 		is_obstacle = false; // we are jumping over the obstacle, ignore it
+
 	// Is there an obstacle in front? Do not move, and allow dig to start
 	bool do_dig = false;
 	if (is_obstacle)
 	{
+		if (s_blocked_by_obstacle_start < 0.0f)
+			s_blocked_by_obstacle_start = G.t_cur;
+
 		s_move_speed = 0.0f;
 		// B: dig
 		if (G.buttons_cur & kPlatButtonB)
 			do_dig = true;
+	}
+	else
+	{
+		s_blocked_by_obstacle_start = -1.0f;
 	}
 
 	// Move based on current speed
@@ -503,15 +543,16 @@ static void update_curve_scene()
 	update_curve_obstacles(do_dig);
 	choco_anim_update(&s_curve_obj_choco);
 
-	//// Crank: rotate chocomel
-	//xform obj_rot = xform_make_axis_angle(G.crank_angle_rad, f3(0, 1, 0));
-	//xform obj_tr = xform_multiply(&tr_cur_t, &obj_rot);
 	xform obj_tr = tr_cur_t;
 	obj_tr.pos = v3_add(obj_tr.pos, v3_mulfl(obj_tr.ay, s_jump_height));
 
+	// Crank: orbit camera
+	float cam_dist = 2.7f;
+	float cam_angle = 0.42f + G.crank_angle_rad;
+
 	float3 cam_pos = v3_add(tr_cam_target.pos, tr_cam_target.ay);
-	cam_pos = v3_add(cam_pos, v3_mulfl(tr_cam_target.ax, 2.5f));
-	cam_pos = v3_add(cam_pos, v3_mulfl(tr_cam_target.az, 1.0f));
+	cam_pos = v3_add(cam_pos, v3_mulfl(tr_cam_target.ax, cosf(cam_angle) * cam_dist));
+	cam_pos = v3_add(cam_pos, v3_mulfl(tr_cam_target.az, sinf(cam_angle) * cam_dist));
 	float3 cam_target = v3_add(tr_cam_target.pos, v3_mulfl(tr_cam_target.ay, 0.5f));
 	scene_setCamera(&s_curve_scene, cam_pos, cam_target, 1.0f, tr_cam_target.ay);
 
@@ -525,6 +566,42 @@ static void update_curve_scene()
 	plat_gfx_clear(kSolidColorWhite);
 	scene_draw(&s_curve_scene, G.framebuffer, G.framebuffer_stride, 0);
 
+	// images
+	// draw instructions when we're at start
+	if (s_cur_t < 0.002f)
+	{
+		int ww, hh;
+		plat_gfx_get_bitmap_size(s_img_instructions, &ww, &hh);
+		plat_gfx_draw_bitmap(s_img_instructions, SCREEN_X / 2, SCREEN_Y / 2 - hh / 2);
+	}
+	// draw "dig" on first obstacle, or if we're stuck on an obstacle for a bit
+	else if (!do_dig && s_blocked_by_obstacle_start >= 0.0f && (s_obstacle_counter == 1 || G.t_cur - s_blocked_by_obstacle_start > 3.0f))
+	{
+		plat_gfx_draw_bitmap(s_img_dig, SCREEN_X / 2, SCREEN_Y / 2);
+	}
+	// draw "move" if idling for a while
+	else if (s_idle_start >= 0.0f && (G.t_cur - s_idle_start > 3.0f))
+	{
+		plat_gfx_draw_bitmap(s_img_move, SCREEN_X / 2, SCREEN_Y / 2);
+	}
+
+	// percentage of track finished yet
+	{
+		int percent = clamp_i((int)(s_cur_t * 100.0f + 0.5f), 0, 100);
+		int dig_100 = percent / 100;
+		int dig_10 = (percent / 10) % 10;
+		int dig_1 = percent % 10;
+		int x = 2;
+		int y = SCREEN_Y - (12 + 2);
+		if (percent >= 100)
+			draw_and_advance_img(&x, y, s_img_digits[dig_100]);
+		if (percent >= 10)
+			draw_and_advance_img(&x, y, s_img_digits[dig_10]);
+		draw_and_advance_img(&x, y, s_img_digits[dig_1]);
+		draw_and_advance_img(&x, y, s_img_percent);
+	}
+
+	// stats
 	G.statval1 = s_curve_scene.stats_visible_tris;
 	G.statval2 = 0;
 }
