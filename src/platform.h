@@ -37,6 +37,7 @@ void plat_gfx_begin_stats();
 void plat_gfx_draw_stats(int par1, int par2);
 
 PlatBitmap* plat_gfx_load_bitmap(const char* file_path, const char** outerr);
+void plat_gfx_get_bitmap_size(const PlatBitmap* bitmap, int* width, int* height);
 void plat_gfx_draw_bitmap(PlatBitmap* bitmap, int x, int y);
 
 PlatFile* plat_file_open_read(const char* file_path);

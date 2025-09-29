@@ -96,6 +96,14 @@ PlatBitmap* plat_gfx_load_bitmap(const char* file_path, const char** outerr)
 	return (PlatBitmap*)s_pd->graphics->loadBitmap(file_path, outerr);
 }
 
+void plat_gfx_get_bitmap_size(const PlatBitmap* bitmap, int* width, int* height)
+{
+	int rowbytes;
+	uint8_t* mask;
+	uint8_t* data;
+	s_pd->graphics->getBitmapData((LCDBitmap*)bitmap, width, height, &rowbytes, &mask, &data);
+}
+
 void plat_gfx_draw_bitmap(PlatBitmap* bitmap, int x, int y)
 {
 	s_pd->graphics->drawBitmap((LCDBitmap*)bitmap, x, y, kBitmapUnflipped);
@@ -400,6 +408,12 @@ PlatBitmap* plat_gfx_load_bitmap(const char* file_path, const char** outerr)
 	int comp;
 	res->ga = stbi_load(path, &res->width, &res->height, &comp, 2);
 	return res;
+}
+
+void plat_gfx_get_bitmap_size(const PlatBitmap* bitmap, int* width, int* height)
+{
+	*width = bitmap->width;
+	*height = bitmap->height;
 }
 
 void plat_gfx_draw_bitmap(PlatBitmap* bitmap, int x, int y)
