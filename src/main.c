@@ -386,7 +386,7 @@ static void draw_number(int number, int x, int y)
 
 static void update_game()
 {
-	const float k_run_speed = 0.6f;
+	const float k_run_speed = 0.8f;
 
 	// Game not started yet: any button starts
 	if ((GS.t_game_start < 0.0f) && G.buttons_pressed)
@@ -407,7 +407,7 @@ static void update_game()
 	// Chocomel movement
 	// Right: change move speed
 	if ((G.buttons_cur & kPlatButtonRight) && !is_finished)
-		GS.move_speed += 0.7f * G.t_dt;
+		GS.move_speed += 0.5f * G.t_dt;
 	else
 		GS.move_speed -= 0.3f * G.t_dt;
 	GS.move_speed = clamp_f(GS.move_speed, 0.0f, 1.0f);
