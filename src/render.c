@@ -131,10 +131,10 @@ static void draw_black_line(uint8_t* bitmap, int rowstride, const float3* p1, co
 void scene_init(Scene* scene)
 {
 	memset(scene, 0, sizeof(*scene));
-	scene_setCamera(scene, (float3) { 0, 0, 0 }, (float3) { 0, 0, 1 }, 1.0, (float3) { 0, 1, 0 });
-	scene_setLight(scene, (float3) { 0, -1, 0 });
+	scene_setCamera(scene, f3(0, 0, 0), f3(0, 0, 1), 1.0f, f3(0, 1, 0));
+	scene_setLight(scene, f3(0, -1, 0));
 
-	scene_setCenter(scene, 0.5, 0.5);
+	scene_setCenter(scene, 0.5f, 0.5f);
 }
 
 void scene_shutdown(Scene* scene)
@@ -306,7 +306,7 @@ static void draw_mesh_instance(Scene* scene, uint8_t* buffer, int rowstride, con
 		// vertices in fixed point
 		const uint32_t* src_vtx = (const uint32_t*)mesh->vertices + frame * mesh->vertex_count;
 		const float3 bbox_min = mesh->bbox_min;
-		const float3 bbox_scale = v3_mul(v3_sub(mesh->bbox_max, mesh->bbox_min), (float3) { 1.0f / 2047.0f, 1.0f / 1023.0f, 1.0f / 2047.0f });
+		const float3 bbox_scale = v3_mul(v3_sub(mesh->bbox_max, mesh->bbox_min), f3(1.0f / 2047.0f, 1.0f / 1023.0f, 1.0f / 2047.0f));
 		for (int i = 0; i < mesh->vertex_count; ++i)
 		{
 			const uint32_t v_bits = *src_vtx;

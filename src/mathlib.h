@@ -179,6 +179,12 @@ static inline int clamp_i(int v, int a, int b)
 	return v;
 }
 
+static inline float clamp_f(float v, float a, float b)
+{
+	if (v < a) v = a;
+	if (v > b) v = b;
+	return v;
+}
 
 #define M_PIf (3.14159265f)
 
@@ -262,7 +268,7 @@ static inline float3 f3(float x, float y, float z)
 
 static inline float3 v3_cross(float3 a, float3 b)
 {
-	return (float3){ .x = a.y * b.z - a.z * b.y, .y = a.z * b.x - a.x * b.z, .z = a.x * b.y - a.y * b.x };
+	return f3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x);
 }
 
 static inline float v3_dot(float3 a, float3 b)
@@ -283,40 +289,40 @@ static inline float3 v3_neg(float3 v)
 	return f3(-v.x, -v.y, -v.z);
 }
 
-static inline float v3_lensq(float3* v)
+static inline float v3_lensq(float3 v)
 {
-	return v->x * v->x + v->y * v->y + v->z * v->z;
+	return v.x * v.x + v.y * v.y + v.z * v.z;
 }
 
-static inline float v3_len(float3* v)
+static inline float v3_len(float3 v)
 {
 	return sqrtf(v3_lensq(v));
 }
 
 static inline float3 v3_add(float3 a, float3 v)
 {
-	return (float3) { a.x + v.x, a.y + v.y, a.z + v.z };
+	return f3(a.x + v.x, a.y + v.y, a.z + v.z);
 }
 static inline float3 v3_sub(float3 a, float3 v)
 {
-	return (float3) { a.x - v.x, a.y - v.y, a.z - v.z };
+	return f3(a.x - v.x, a.y - v.y, a.z - v.z);
 }
 static inline float3 v3_subfl(float3 a, float v)
 {
-	return (float3) { a.x - v, a.y - v, a.z - v };
+	return f3(a.x - v, a.y - v, a.z - v);
 }
 static inline float3 v3_mul(float3 a, float3 b)
 {
-	return (float3) { a.x * b.x, a.y * b.y, a.z * b.z };
+	return f3(a.x * b.x, a.y * b.y, a.z * b.z);
 }
 static inline float3 v3_mulfl(float3 v, float s)
 {
-	return (float3) { v.x*s, v.y*s, v.z*s };
+	return f3(v.x*s, v.y*s, v.z*s);
 }
 static inline float3 v3_lerp(float3 a, float3 b, float f)
 {
 	float ff = 1.0f - f;
-	float3 r = { a.x*ff + b.x*f, a.y*ff + b.y*f, a.z*ff + b.z*f };
+	float3 r = f3(a.x*ff + b.x*f, a.y*ff + b.y*f, a.z*ff + b.z*f);
 	return r;
 }
 

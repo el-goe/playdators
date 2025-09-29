@@ -5,8 +5,8 @@
 float3 v3_tri_normal(const float3* p1, const float3* p2, const float3* p3)
 {
 	float3 v = v3_cross(
-		(float3) { p2->x - p1->x, p2->y - p1->y, p2->z - p1->z },
-		(float3) { p3->x - p1->x, p3->y - p1->y, p3->z - p1->z });
+		f3(p2->x - p1->x, p2->y - p1->y, p2->z - p1->z),
+		f3(p3->x - p1->x, p3->y - p1->y, p3->z - p1->z));
 	return v3_normalize(v);
 }
 
@@ -75,8 +75,7 @@ float3 xform_transform_pt(const xform* m, float3 p)
 	float x = p.x * m->ax.x + p.y * m->ay.x + p.z * m->az.x + m->pos.x;
 	float y = p.x * m->ax.y + p.y * m->ay.y + p.z * m->az.y + m->pos.y;
 	float z = p.x * m->ax.z + p.y * m->ay.z + p.z * m->az.z + m->pos.z;
-
-	return (float3) { x, y, z };
+	return f3(x, y, z);
 }
 
 float xform_get_determinant(xform* m)
@@ -93,14 +92,14 @@ xform xform_look_at(float3 pos, float3 target, float3 up)
 {
 	// calculate forward vector
 	float3 fw = v3_sub(target, pos);
-	if (v3_lensq(&fw) < 1.0e-6f)
+	if (v3_lensq(fw) < 1.0e-6f)
 		fw = f3(0, 0, 1);
 	else
 		fw = v3_normalize(fw);
 	// calculate right vector
 	float3 rt = v3_cross(up, fw);
 	// up is nearly parallel to forward, pick a different "up"
-	if (v3_lensq(&rt) < 1.0e-6f) {
+	if (v3_lensq(rt) < 1.0e-6f) {
 		up = fabsf(fw.y) < 0.99f ? f3(0, 1, 0) : f3(1, 0, 0);
 		rt = v3_cross(fw, up);
 	}
