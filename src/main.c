@@ -246,16 +246,8 @@ static void update_zoo_scene()
 // --------------------------------------------------------------------
 //  move along a curve scene
 
-// No input:
-// - Chocomel stands, then sits after a bit
-// Right: moves chocomel forward
-// - Animation walk or trot, depending on speed
-// When faced with obstacle: can't move forward.
-// - B: "dig" animation, reduces health of obstacle
-//@TODO: Up: jump, can only do that when running
-//@TODO: Game start: camera moves towards / orbits chocomel, show sprite saying crank.
-//@TODO: Game end: when runs across whole curve loop. Points for how fast.
-
+static float s_start_time;
+static float s_finish_time;
 static Scene s_curve_scene;
 static Mesh* s_curve_mesh;
 static MeshInstance s_curve_obj;
@@ -410,12 +402,12 @@ typedef struct ObstacleDesc {
 } ObstacleDesc;
 
 static ObstacleDesc k_obstacle_desc[] = {
-	{TestMesh_Boulder001, 3.0f, M_PIf},
-	{TestMesh_Boulder002, 3.0f, M_PIf},
-	{TestMesh_Boulder007, 3.0f, M_PIf},
+	{TestMesh_Boulder001, 2.0f, M_PIf},
+	{TestMesh_Boulder002, 2.0f, M_PIf},
+	{TestMesh_Boulder007, 2.0f, M_PIf},
 	{TestMesh_Log003, 3.0f, M_PIf * 0.1f},
-	{TestMesh_SnowPiles, 3.0f, M_PIf},
-	{TestMesh_TrafficCone, 3.0f, M_PIf},
+	{TestMesh_SnowPiles, 1.0f, M_PIf},
+	{TestMesh_TrafficCone, 1.0f, M_PIf},
 };
 #define OBSTACLE_DESC_COUNT (sizeof(k_obstacle_desc) / sizeof(k_obstacle_desc[0]))
 
@@ -467,9 +459,11 @@ static void update_curve_scene()
 {
 	const float k_run_speed = 0.6f;
 
+	const bool is_finished = s_cur_t >= 0.999f;
+
 	// Chocomel movement
 	// Right: change move speed
-	if (G.buttons_cur & kPlatButtonRight)
+	if ((G.buttons_cur & kPlatButtonRight) && !is_finished)
 		s_move_speed += 0.7f * G.t_dt;
 	else
 		s_move_speed -= 0.3f * G.t_dt;
@@ -486,7 +480,7 @@ static void update_curve_scene()
 	bool is_obstacle = cur_dist2_to_obs < dist_for_stop * dist_for_stop;
 
 	// Up: jump
-	if (s_move_speed >= k_run_speed && (G.buttons_cur & kPlatButtonUp) && s_jump_height <= 0.0f && !is_obstacle)
+	if (s_move_speed >= k_run_speed && (G.buttons_cur & kPlatButtonUp) && s_jump_height <= 0.0f && !is_obstacle && !is_finished)
 	{
 		s_jump_velocity = 3.0f;
 	}
@@ -502,7 +496,7 @@ static void update_curve_scene()
 
 	// Is there an obstacle in front? Do not move, and allow dig to start
 	bool do_dig = false;
-	if (is_obstacle)
+	if (is_obstacle && !is_finished)
 	{
 		if (s_blocked_by_obstacle_start < 0.0f)
 			s_blocked_by_obstacle_start = G.t_cur;
@@ -567,8 +561,35 @@ static void update_curve_scene()
 	scene_draw(&s_curve_scene, G.framebuffer, G.framebuffer_stride, 0);
 
 	// images
+	// draw score when finished
+	if (is_finished)
+	{
+		if (s_finish_time <= 0.0f)
+		{
+			s_finish_time = G.t_cur - s_start_time;
+		}
+		int ww, hh;
+		plat_gfx_get_bitmap_size(s_img_finished, &ww, &hh);
+		plat_gfx_draw_bitmap(s_img_finished, SCREEN_X / 2, SCREEN_Y / 2 - hh / 2);
+
+		int total_time = (int)(s_finish_time - s_start_time);
+		int dig_1000 = (total_time / 1000) % 10;
+		int dig_100 = (total_time / 100) % 10;
+		int dig_10 = (total_time / 10) % 10;
+		int dig_1 = total_time % 10;
+		int x = SCREEN_X / 2;
+		int y = SCREEN_Y / 2 + hh / 2;
+		if (total_time >= 1000)
+			draw_and_advance_img(&x, y, s_img_digits[dig_1000]);
+		if (total_time >= 100)
+			draw_and_advance_img(&x, y, s_img_digits[dig_100]);
+		if (total_time >= 10)
+			draw_and_advance_img(&x, y, s_img_digits[dig_10]);
+		draw_and_advance_img(&x, y, s_img_digits[dig_1]);
+
+	}
 	// draw instructions when we're at start
-	if (s_cur_t < 0.002f)
+	else if (s_cur_t < 0.002f)
 	{
 		int ww, hh;
 		plat_gfx_get_bitmap_size(s_img_instructions, &ww, &hh);
@@ -586,6 +607,7 @@ static void update_curve_scene()
 	}
 
 	// percentage of track finished yet
+	if (!is_finished)
 	{
 		int percent = clamp_i((int)(s_cur_t * 100.0f + 0.5f), 0, 100);
 		int dig_100 = percent / 100;
