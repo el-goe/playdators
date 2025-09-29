@@ -21,6 +21,11 @@ typedef struct Globals
 	uint32_t buttons_cur; // buttons currently pressed, bitmask of kButton*
 	uint32_t buttons_pressed; // buttons that were pressed down this frame, bitmask of kButton*
 	float crank_angle_rad;
+
+	// time
+	float t_prev;
+	float t_cur;
+	float t_dt;
 } Globals;
 
 extern Globals G;
