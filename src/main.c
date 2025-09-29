@@ -263,6 +263,8 @@ static MeshInstance s_curve_obj_choco;
 static MeshInstance s_curve_obj_gate;
 static float s_cur_t;
 static float s_move_speed;
+static float s_jump_height;
+static float s_jump_velocity;
 
 typedef struct CurveObstacle
 {
@@ -396,7 +398,7 @@ static ObstacleDesc k_obstacle_desc[] = {
 
 static void update_curve_obstacle(CurveObstacle* ob, bool digging)
 {
-	if (ob->health <= 0.0f)
+	if (ob->health <= 0.0f || ob->curve_t + 0.003f < s_cur_t)
 	{
 		// spawn a new one
 		ob->time_start = G.t_cur;
@@ -431,6 +433,8 @@ static void update_curve_obstacles(bool digging)
 
 static void update_curve_scene()
 {
+	const float k_run_speed = 0.6f;
+
 	// Chocomel movement
 	// Right: change move speed
 	if (G.buttons_cur & kPlatButtonRight)
@@ -439,9 +443,31 @@ static void update_curve_scene()
 		s_move_speed -= 0.3f * G.t_dt;
 	s_move_speed = clamp_f(s_move_speed, 0.0f, 1.0f);
 
-	// Alive obstacle in front? Do not move, and allow dig to start
-	const float obs_dist = 1.0f;
-	const bool is_obstacle = s_curve_obstacle.health > 0.0f && v3_lensq(v3_sub(s_curve_obj_choco.tr.pos, s_curve_obstacle.orig_pos)) < obs_dist * obs_dist;
+	// Determine distance to obstacle
+	float cur_dist2_to_obs = 1000.0f;
+	if (s_curve_obstacle.health > 0.0f && s_curve_obstacle.curve_t > s_cur_t)
+	{
+		cur_dist2_to_obs = v3_lensq(v3_sub(s_curve_obj_choco.tr.pos, s_curve_obstacle.orig_pos));
+	}
+	const float dist_for_stop = 1.0f;
+	const float obs_height = 0.5f;
+	bool is_obstacle = cur_dist2_to_obs < dist_for_stop * dist_for_stop;
+
+	// Up: jump
+	if (s_move_speed >= k_run_speed && (G.buttons_cur & kPlatButtonUp) && s_jump_height <= 0.0f && !is_obstacle)
+	{
+		s_jump_velocity = 3.0f;
+	}
+	const float k_jump_gravity = 3.0f;
+	s_jump_velocity -= G.t_dt * k_jump_gravity;
+	s_jump_velocity = clamp_f(s_jump_velocity, -20.0f, 20.0f);
+	s_jump_height += s_jump_velocity * G.t_dt;
+	s_jump_height = clamp_f(s_jump_height, 0.0f, 10.0f);
+
+
+	if (s_jump_height > obs_height)
+		is_obstacle = false; // we are jumping over the obstacle, ignore it
+	// Is there an obstacle in front? Do not move, and allow dig to start
 	bool do_dig = false;
 	if (is_obstacle)
 	{
@@ -455,9 +481,11 @@ static void update_curve_scene()
 	s_cur_t += s_move_speed * G.t_dt * 0.01f;
 
 	// Switch to appropriate animation
-	if (do_dig)
+	if (s_jump_height > 0.0f)
+		choco_anim_start(ChocoAnimTrot);
+	else if (do_dig)
 		choco_anim_start(ChocoAnimDig);
-	else if (s_move_speed >= 0.6f)
+	else if (s_move_speed >= k_run_speed)
 		choco_anim_start(ChocoAnimTrot);
 	else if (s_move_speed >= 0.01f)
 		choco_anim_start(ChocoAnimWalk);
@@ -479,6 +507,7 @@ static void update_curve_scene()
 	//xform obj_rot = xform_make_axis_angle(G.crank_angle_rad, f3(0, 1, 0));
 	//xform obj_tr = xform_multiply(&tr_cur_t, &obj_rot);
 	xform obj_tr = tr_cur_t;
+	obj_tr.pos = v3_add(obj_tr.pos, v3_mulfl(obj_tr.ay, s_jump_height));
 
 	float3 cam_pos = v3_add(tr_cam_target.pos, tr_cam_target.ay);
 	cam_pos = v3_add(cam_pos, v3_mulfl(tr_cam_target.ax, 2.5f));
