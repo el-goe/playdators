@@ -331,6 +331,7 @@ static void draw_mesh_instance(Scene* scene, uint8_t* buffer, int rowstride, con
 	}
 
 	// project points to screen
+	const float k_min_z = 0.015f;
 	const float scene_scale = scene->scale;
 	const float proj_add_x = 1.6666666f * scene->centerx * scene_scale;
 	const float proj_add_y = scene->centery * scene_scale;
@@ -339,7 +340,7 @@ static void draw_mesh_instance(Scene* scene, uint8_t* buffer, int rowstride, con
 		const float3* p = &scene->tmp_view_points[i];
 		float3* pp = &scene->tmp_proj_points[i];
 		const float pz = p->z;
-		if (pz > 0)
+		if (pz >= k_min_z)
 		{
 			const float inv_z = scene_scale / pz;
 			pp->x = p->x * inv_z + proj_add_x;
@@ -361,7 +362,7 @@ static void draw_mesh_instance(Scene* scene, uint8_t* buffer, int rowstride, con
 		const float3 p2 = scene->tmp_proj_points[idx2];
 
 		// If any vertex is behind the camera, skip it
-		const int any_non_pos = (p0.z <= 0) | (p1.z <= 0) | (p2.z <= 0);
+		const int any_non_pos = (p0.z < k_min_z) | (p1.z < k_min_z) | (p2.z < k_min_z);
 		if (any_non_pos)
 			continue;
 
