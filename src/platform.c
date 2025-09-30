@@ -160,7 +160,7 @@ PlatFileMusicPlayer* plat_audio_play_file(const char* file_path)
 	bool s_music_ok = s_pd->sound->fileplayer->loadIntoPlayer(music, file_path) != 0;
 	if (s_music_ok)
 	{
-		s_pd->sound->fileplayer->play(music, 1);
+		s_pd->sound->fileplayer->play(music, 0);
 		return (PlatFileMusicPlayer*)music;
 	}
 	return NULL;
@@ -657,8 +657,12 @@ static void audio_sample_cb(float* buffer, int num_frames, int num_channels)
 	if (decode_frames < num_frames)
 	{
 		memset(buffer + decode_frames * num_channels, 0, (num_frames - decode_frames) * num_channels * sizeof(buffer[0]));
+		s_current_music->decode_pos = 0; // loop to beginning
 	}
-	s_current_music->decode_pos += decode_frames;
+	else
+	{
+		s_current_music->decode_pos += decode_frames;
+	}
 }
 
 static const char* kSokolVertexSource =

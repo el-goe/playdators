@@ -104,6 +104,11 @@ static bool load_images()
 	return true;
 }
 
+// ======== Audio
+
+static const char* kMusicPath = "audio_intro.pda";
+static PlatFileMusicPlayer* s_music;
+
 // ======== Game state
 
 enum ChocomelAnims {
@@ -581,6 +586,8 @@ void app_initialize()
 	if (!load_images())
 		return;
 	game_initialize();
+
+	s_music = plat_audio_play_file(kMusicPath);
 }
 
 void app_update()

@@ -162,6 +162,7 @@ else()
 	add_custom_command(
 		TARGET ${PLAYDATE_GAME_NAME} PRE_LINK
 		COMMAND ${CMAKE_COMMAND} -E copy
+		${CMAKE_CURRENT_SOURCE_DIR}/Source/audio_intro.wav
 		${CMAKE_CURRENT_SOURCE_DIR}/Source/BlueNoise.tga
 		${CMAKE_CURRENT_SOURCE_DIR}/Source/boulder_001.pdm
 		${CMAKE_CURRENT_SOURCE_DIR}/Source/boulder_002.pdm
