@@ -28,4 +28,4 @@ Everything I wrote myself is Unlicense / Public Domain. However some 3rd party l
 - Parts were based on `mini3d` from Playdate SDK examples (Created by Dave Hayden on 10/20/15, Copyright © 2015 Panic, Inc.)
   and on [mini3d-plus](https://github.com/nstbayless/mini3d-plus) (MIT license), but by now I have replaced them.
 - (only on PC): [stb_image.h](https://github.com/nothings/stb): Public Domain / MIT.
-- (only on PC): [Sokol](https://github.com/floooh/sokol): sokol_app, sokol_gfx, sokol_time. zlib/libpng license.
+- (only on PC): [Sokol](https://github.com/floooh/sokol): sokol_app, sokol_audio, sokol_gfx, sokol_time. zlib/libpng license.

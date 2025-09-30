@@ -68,6 +68,8 @@ set (DEMO_SOURCES
 	src/util/radixsort.h
 	src/util/image_loader.c
 	src/util/image_loader.h
+	src/util/wav_ima_adpcm.c
+	src/util/wav_ima_adpcm.h
 )
 
 if (TOOLCHAIN STREQUAL "armgcc")

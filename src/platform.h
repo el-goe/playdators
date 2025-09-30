@@ -51,10 +51,14 @@ void plat_file_close(PlatFile* file);
 float plat_time_get();
 void plat_time_reset();
 
+PlatFileMusicPlayer* plat_audio_play_file(const char* file_path);
+bool plat_audio_is_playing(PlatFileMusicPlayer* music);
+float plat_audio_get_time(PlatFileMusicPlayer* music);
+void plat_audio_set_time(PlatFileMusicPlayer* music, float t);
+
 void plat_input_get_buttons(PlatButtons* current, PlatButtons* pushed, PlatButtons* released);
 float plat_input_get_crank_angle_rad();
 float plat_input_get_crank_delta_angle_rad();
-
 
 void plat_sys_log_error(const char* fmt, ...);
 

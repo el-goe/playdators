@@ -154,6 +154,33 @@ void plat_sys_log_error(const char* fmt, ...)
 	va_end(args);
 }
 
+PlatFileMusicPlayer* plat_audio_play_file(const char* file_path)
+{
+	FilePlayer* music = s_pd->sound->fileplayer->newPlayer();
+	bool s_music_ok = s_pd->sound->fileplayer->loadIntoPlayer(music, file_path) != 0;
+	if (s_music_ok)
+	{
+		s_pd->sound->fileplayer->play(music, 1);
+		return (PlatFileMusicPlayer*)music;
+	}
+	return NULL;
+}
+
+bool plat_audio_is_playing(PlatFileMusicPlayer* music)
+{
+	return s_pd->sound->fileplayer->isPlaying((FilePlayer*)music) != 0;
+}
+
+float plat_audio_get_time(PlatFileMusicPlayer* music)
+{
+	return s_pd->sound->fileplayer->getOffset((FilePlayer*)music);
+}
+
+void plat_audio_set_time(PlatFileMusicPlayer* music, float t)
+{
+	s_pd->sound->fileplayer->setOffset((FilePlayer*)music, t);
+}
+
 float plat_time_get()
 {
 	return s_pd->system->getElapsedTime();
@@ -228,6 +255,7 @@ int eventHandler(PlaydateAPI* pd, PDSystemEvent event, uint32_t arg)
 #define SOKOL_GLCORE
 #endif
 #include "external/sokol/sokol_app.h"
+#include "external/sokol/sokol_audio.h"
 #include "external/sokol/sokol_gfx.h"
 #include "external/sokol/sokol_log.h"
 #include "external/sokol/sokol_time.h"
@@ -236,6 +264,8 @@ int eventHandler(PlaydateAPI* pd, PDSystemEvent event, uint32_t arg)
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_PNG
 #include "external/stb_image.h"
+
+#include "util/wav_ima_adpcm.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -500,6 +530,74 @@ void plat_sys_log_error(const char* fmt, ...)
 	va_end(args);
 }
 
+typedef struct PlatFileMusicPlayer {
+	uint8_t* file;
+	int file_size;
+	wav_file_desc wav;
+	wav_decode_state decode_state;
+	int decode_pos;
+} PlatFileMusicPlayer;
+
+static PlatFileMusicPlayer* s_current_music;
+
+PlatFileMusicPlayer* plat_audio_play_file(const char* file_path)
+{
+	s_current_music = NULL;
+
+	// read file into memory
+	char path[1000];
+	snprintf(path, sizeof(path), "%s/%s", s_data_path, file_path);
+	size_t path_len = strlen(path);
+	path[path_len - 3] = 'w';
+	path[path_len - 2] = 'a';
+	path[path_len - 1] = 'v';
+
+	FILE* file = fopen(path, "rb");
+	if (file == NULL)
+		return NULL;
+
+	PlatFileMusicPlayer* res = (PlatFileMusicPlayer*)plat_malloc(sizeof(PlatFileMusicPlayer));
+	res->decode_pos = 0;
+	fseek(file, 0, SEEK_END);
+	res->file_size = (int)ftell(file);
+	fseek(file, 0, SEEK_SET);
+	res->file = plat_malloc(res->file_size);
+	fread(res->file, 1, res->file_size, file);
+	fclose(file);
+
+	// parse wav header
+	if (!wav_parse_header(res->file, res->file_size, &res->wav))
+		return NULL;
+
+	if (res->wav.sample_format != 0x11) // not IMA ADPCM
+		return NULL;
+
+	wav_decode_state_init(&res->wav, &res->decode_state);
+
+	s_current_music = res;
+	return res;
+}
+
+bool plat_audio_is_playing(PlatFileMusicPlayer* music)
+{
+	return music->decode_pos < music->wav.sample_count;
+}
+
+float plat_audio_get_time(PlatFileMusicPlayer* music)
+{
+	return music->decode_pos / 44100.0f;
+}
+
+void plat_audio_set_time(PlatFileMusicPlayer* music, float t)
+{
+	int sample_pos = (int)(t * 44100.0f);
+	if (sample_pos < 0)
+		sample_pos = 0;
+	if (sample_pos > music->wav.sample_count)
+		sample_pos = music->wav.sample_count;
+	music->decode_pos = sample_pos;
+}
+
 static uint64_t sok_start_time;
 
 float plat_time_get()
@@ -537,6 +635,31 @@ float plat_input_get_crank_delta_angle_rad()
 }
 
 // sokol_app setup
+
+static void audio_sample_cb(float* buffer, int num_frames, int num_channels)
+{
+	if (s_current_music == NULL)
+	{
+		memset(buffer, 0, num_frames * num_channels * sizeof(buffer[0]));
+		return;
+	}
+
+	assert(1 == num_channels);
+
+	int decode_frames = num_frames;
+	if (decode_frames > s_current_music->wav.sample_count - s_current_music->decode_pos)
+		decode_frames = s_current_music->wav.sample_count - s_current_music->decode_pos;
+	if (decode_frames < 0)
+		decode_frames = 0;
+
+	wav_ima_adpcm_decode(buffer, s_current_music->decode_pos, decode_frames, s_current_music->wav.sample_data, &s_current_music->decode_state);
+
+	if (decode_frames < num_frames)
+	{
+		memset(buffer + decode_frames * num_channels, 0, (num_frames - decode_frames) * num_channels * sizeof(buffer[0]));
+	}
+	s_current_music->decode_pos += decode_frames;
+}
 
 static const char* kSokolVertexSource =
 #if defined(SOKOL_METAL) || defined(SOKOL_D3D11)
@@ -701,6 +824,14 @@ static void sapp_init(void)
 		.cull_mode = SG_CULLMODE_NONE,
 	});
 
+	// audio
+	saudio_setup(&(saudio_desc) {
+		.sample_rate = 44100,
+		.num_channels = 1,
+		.stream_cb = audio_sample_cb,
+		.logger.func = slog_func,
+	});
+
 	stm_setup();
 	sok_start_time = stm_now();
 
@@ -710,6 +841,16 @@ static void sapp_init(void)
 static void sapp_frame(void)
 {
 	app_update();
+
+	#if 0
+	#if defined(__EMSCRIPTEN__)
+	if (saudio_suspended()) {
+		if (0 == (sapp_frame_count() & (1 << 5))) {
+			draw_text("click/tap to start", (400 - (18 * 8)) / 2, (240 - 7) / 2);
+		}
+	}
+	#endif
+	#endif
 
 	sg_update_image(sok_image, &(sg_image_data){.subimage[0][0] = SG_RANGE(s_screen_buffer)});
 	sg_update_image(sok_debug_image, &(sg_image_data){.subimage[0][0] = SG_RANGE(s_screen_debug_buffer)});
@@ -745,6 +886,7 @@ static void sapp_frame(void)
 
 static void sapp_cleanup(void)
 {
+	saudio_shutdown();
 	sg_shutdown();
 }
 
