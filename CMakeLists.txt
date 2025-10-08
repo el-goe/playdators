@@ -162,8 +162,18 @@ else()
 	add_custom_command(
 		TARGET ${PLAYDATE_GAME_NAME} PRE_LINK
 		COMMAND ${CMAKE_COMMAND} -E copy
+
+		${CMAKE_CURRENT_SOURCE_DIR}/Source/audio_bush-bounce.wav
+		${CMAKE_CURRENT_SOURCE_DIR}/Source/audio_chocomel-run-0.wav
+		${CMAKE_CURRENT_SOURCE_DIR}/Source/audio_chocomel-run-1.wav
+		${CMAKE_CURRENT_SOURCE_DIR}/Source/audio_chocomel-run-2.wav
+		${CMAKE_CURRENT_SOURCE_DIR}/Source/audio_chocomel-run-3.wav
+		${CMAKE_CURRENT_SOURCE_DIR}/Source/audio_dig.wav
 		${CMAKE_CURRENT_SOURCE_DIR}/Source/audio_intro.wav
+		${CMAKE_CURRENT_SOURCE_DIR}/Source/audio_pinda-hum-happy-melody_1.wav
+
 		${CMAKE_CURRENT_SOURCE_DIR}/Source/BlueNoise.tga
+
 		${CMAKE_CURRENT_SOURCE_DIR}/Source/boulder_001.pdm
 		${CMAKE_CURRENT_SOURCE_DIR}/Source/boulder_002.pdm
 		${CMAKE_CURRENT_SOURCE_DIR}/Source/boulder_007.pdm
@@ -173,6 +183,7 @@ else()
 		${CMAKE_CURRENT_SOURCE_DIR}/Source/snow_piles.pdm
 		${CMAKE_CURRENT_SOURCE_DIR}/Source/snowman.pdm
 		${CMAKE_CURRENT_SOURCE_DIR}/Source/traffic_cone.pdm
+
 		${CMAKE_CURRENT_SOURCE_DIR}/Source/img_0.png
 		${CMAKE_CURRENT_SOURCE_DIR}/Source/img_1.png
 		${CMAKE_CURRENT_SOURCE_DIR}/Source/img_2.png
@@ -188,6 +199,7 @@ else()
 		${CMAKE_CURRENT_SOURCE_DIR}/Source/img_instructions.png
 		${CMAKE_CURRENT_SOURCE_DIR}/Source/img_move.png
 		${CMAKE_CURRENT_SOURCE_DIR}/Source/img_percent.png
+
         $<TARGET_FILE_DIR:${PLAYDATE_GAME_NAME}>/${DATA_DIR}
 	)
 
