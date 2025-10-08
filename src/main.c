@@ -448,7 +448,10 @@ static void update_game()
 	if (is_finished)
 	{
 		if (GS.t_game_finish <= 0.0f)
+		{
 			GS.t_game_finish = G.t_cur - GS.t_game_start;
+			plat_sound_play(s_sounds[GameSound_HumMellody], false);
+		}
 		if (G.buttons_pressed) // any button restarts the game
 			game_state_init();
 	}
@@ -604,11 +607,9 @@ static void update_game()
 	// "finished" label
 	if (is_finished)
 	{
-		int x = SCREEN_X - 3;
-		int y = SCREEN_Y - 14;
 		int ww, hh;
 		plat_gfx_get_bitmap_size(s_images[GameImage_Finished], &ww, &hh);
-		plat_gfx_draw_bitmap(s_images[GameImage_Finished], x - ww, y);
+		plat_gfx_draw_bitmap(s_images[GameImage_Finished], SCREEN_X / 2 - ww / 2, SCREEN_Y / 2 - hh / 2);
 	}
 	// draw instructions when game has not started yet
 	else if (GS.t_game_start < 0.0f)
