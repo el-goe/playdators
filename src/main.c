@@ -174,6 +174,9 @@ typedef struct GameState
 	int obstacle_counter;
 
 	float cam_adjust_angle;
+
+	float sound_run_start;
+	float sound_run_length;
 } GameState;
 
 static GameState GS;
@@ -187,6 +190,7 @@ static void game_state_init()
 	GS.t_game_finish = -1.0f;
 	GS.t_blocked_start = -1.0f;
 	GS.curve_t = 0.001f;
+	GS.sound_run_start = -1.0f;
 }
 
 static const int s_choco_anim_table[ChocoAnimCount + 1] = {
@@ -504,20 +508,52 @@ static void update_game()
 	GS.curve_t += GS.move_speed * G.t_dt * 0.01f;
 
 	// Switch to appropriate animation / sound
+	bool do_run = false;
+	bool do_walk = false;
 	if (GS.jump_cur_height > 0.0f)
 		choco_anim_start(ChocoAnimTrot);
 	else if (do_dig)
 		choco_anim_start(ChocoAnimDig);
 	else if (GS.move_speed >= k_run_speed)
+	{
+		do_run = true;
 		choco_anim_start(ChocoAnimTrot);
+	}
 	else if (GS.move_speed >= 0.01f)
+	{
+		do_walk = true;
 		choco_anim_start(ChocoAnimWalk);
+	}
 	else
 	{
 		if ((GS.t_idle_start >= 0.0f && G.t_cur - GS.t_idle_start > 2.0f) || GS.choco_cur_anim == ChocoAnimIdleSit)
 			choco_anim_start(ChocoAnimIdleSit);
 		else
 			choco_anim_start(ChocoAnimIdle);
+	}
+
+	// process run sounds (randomly one out of 4, random volume)
+	if (do_run || do_walk)
+	{
+		if (GS.sound_run_start < -1.0f || G.t_cur >= GS.sound_run_start + GS.sound_run_length)
+		{
+			enum GameSound sound = GameSound_ChocomelRun0 + (XorShift32(&G.rng) % 4);
+			float volume = RandomFloat01(&G.rng);
+			if (do_run)
+				volume = 0.5f + volume * 0.2f;
+			if (do_walk)
+				volume = 0.0f + volume * 0.2f;
+			PlatSound* s = s_sounds[sound];
+			plat_sound_set_time(s, 0.0f);
+			plat_sound_set_volume(s, volume);
+			plat_sound_play(s, false);
+			GS.sound_run_start = G.t_cur;
+			GS.sound_run_length = plat_sound_get_length(s);
+		}
+	}
+	else
+	{
+		GS.sound_run_start = -1.0f;
 	}
 
 	xform tr_cur_t = lissajous_curve_frame(GS.curve_t);
