@@ -7,7 +7,7 @@
 #include "util/pixel_ops.h"
 #include <string.h>
 
-#define SHOW_STATS 1
+//#define SHOW_STATS 1
 
 // ======== Meshes used by the game
 
@@ -387,7 +387,7 @@ static void update_curve_obstacle(CurveObstacle* ob, bool digging)
 		// spawn a new one
 		++GS.obstacle_counter;
 		ob->time_start = G.t_cur;
-		ob->curve_t = GS.curve_t + 0.020f + RandomFloat01(&G.rng) * 0.050f;
+		ob->curve_t = GS.curve_t + 0.040f + RandomFloat01(&G.rng) * 0.070f;
 		uint32_t ob_index = XorShift32(&G.rng) % OBSTACLE_DESC_COUNT;
 		ob->inst.mesh = s_meshes[k_obstacle_desc[ob_index].mesh];
 		ob->health = k_obstacle_desc[ob_index].health;
