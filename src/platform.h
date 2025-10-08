@@ -51,6 +51,7 @@ void plat_file_close(PlatFile* file);
 float plat_time_get();
 void plat_time_reset();
 
+void plat_sound_update();
 PlatSound* plat_sound_open_file(const char* file_path);
 void plat_sound_free(PlatSound* sound);
 void plat_sound_set_volume(PlatSound* sound, float volume);

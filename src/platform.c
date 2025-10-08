@@ -223,6 +223,11 @@ void plat_sound_set_time(PlatSound* sound, float t)
 	s_pd->sound->fileplayer->setOffset(s, t);
 }
 
+void plat_sound_update()
+{
+	// nothing to do
+}
+
 float plat_time_get()
 {
 	return s_pd->system->getElapsedTime();
@@ -658,7 +663,6 @@ void plat_sound_play(PlatSound* sound, bool loop)
 	assert(sound);
 	sound->loop = loop;
 	sound->playing = true;
-	//@TODO: mutex, or switch to push model
 	for (int i = 0; i < MAX_PLAYING_SOUNDS; ++i)
 	{
 		if (s_playing_sounds[i].sound == NULL)
@@ -674,7 +678,6 @@ void plat_sound_stop(PlatSound* sound)
 {
 	assert(sound);
 
-	//@TODO: mutex, or switch to push model
 	for (int i = 0; i < MAX_PLAYING_SOUNDS; ++i)
 	{
 		if (s_playing_sounds[i].sound == sound)
@@ -711,6 +714,69 @@ void plat_sound_set_time(PlatSound* sound, float t)
 	if (sample_pos > sound->wav.sample_count)
 		sample_pos = sound->wav.sample_count;
 	sound->decode_pos = sample_pos;
+}
+
+void plat_sound_update()
+{
+	const int num_channels = saudio_channels();
+	if (num_channels != 1) {
+		return;
+	}
+	int num_frames = saudio_expect();
+	if (num_frames <= 0) {
+		return;
+	}
+
+	#define AUDIO_BUFFER_SIZE (4096)
+	static float buffer[AUDIO_BUFFER_SIZE];
+	if (num_frames > AUDIO_BUFFER_SIZE)
+		num_frames = AUDIO_BUFFER_SIZE;
+
+	// set output to zero
+	memset(buffer, 0, num_frames * num_channels * sizeof(buffer[0]));
+
+	// mix in all the playing sounds
+	for (int idx = 0; idx < MAX_PLAYING_SOUNDS; ++idx)
+	{
+		PlatSound* sound = s_playing_sounds[idx].sound;
+		if (sound == NULL)
+			continue;
+		assert(sound->playing);
+
+		if (sound->volume <= 1.0e-3f)
+			continue;
+
+		int decode_frames = num_frames;
+		if (decode_frames > sound->wav.sample_count - sound->decode_pos)
+			decode_frames = sound->wav.sample_count - sound->decode_pos;
+		if (decode_frames < 0)
+			decode_frames = 0;
+
+		wav_ima_adpcm_decode(buffer, sound->decode_pos, decode_frames, sound->wav.sample_data, &sound->decode_state, sound->volume);
+
+		if (decode_frames < num_frames)
+		{
+			// reached the end
+			if (sound->loop)
+			{
+				// loop to beginning
+				sound->decode_pos = 0;
+			}
+			else
+			{
+				// not looping: stop playing this sound
+				sound->playing = false;
+				sound->decode_pos = 0;
+				s_playing_sounds[idx].sound = NULL;
+			}
+		}
+		else
+		{
+			sound->decode_pos += decode_frames;
+		}
+	}
+
+	saudio_push(buffer, num_frames);
 }
 
 static uint64_t sok_start_time;
@@ -750,57 +816,6 @@ float plat_input_get_crank_delta_angle_rad()
 }
 
 // sokol_app setup
-
-static void audio_sample_cb(float* buffer, const int num_frames, const int num_channels)
-{
-	assert(1 == num_channels);
-
-	// set output to zero
-	memset(buffer, 0, num_frames * num_channels * sizeof(buffer[0]));
-
-	// mix in all the playing sounds
-	for (int idx = 0; idx < MAX_PLAYING_SOUNDS; ++idx)
-	{
-		PlatSound* sound = s_playing_sounds[idx].sound;
-		if (sound == NULL)
-			continue;
-		assert(sound->playing);
-
-		if (sound->volume <= 1.0e-3f)
-			continue;
-
-		int decode_frames = num_frames;
-		if (decode_frames > sound->wav.sample_count - sound->decode_pos)
-			decode_frames = sound->wav.sample_count - sound->decode_pos;
-		if (decode_frames < 0)
-			decode_frames = 0;
-
-		wav_ima_adpcm_decode(buffer, sound->decode_pos, decode_frames, sound->wav.sample_data, &sound->decode_state, sound->volume);
-
-		if (decode_frames < num_frames)
-		{
-			// reached the end
-			if (sound->loop)
-			{
-				// loop to beginning
-				sound->decode_pos = 0;
-			}
-			else
-			{
-				// not looping: stop playing this sound
-				sound->playing = false;
-				sound->decode_pos = 0;
-				//@TODO: mutex, or switch to push model
-				s_playing_sounds[idx].sound = NULL;
-			}
-		}
-		else
-		{
-			sound->decode_pos += decode_frames;
-		}
-
-	}
-}
 
 static const char* kSokolVertexSource =
 #if defined(SOKOL_METAL) || defined(SOKOL_D3D11)
@@ -929,7 +944,7 @@ static void sapp_init(void)
 	sok_image = sg_make_image(&(sg_image_desc) {
 		.width = SCREEN_STRIDE_BYTES,
 		.height = SCREEN_Y,
-		.pixel_format = SG_PIXELFORMAT_R8, //@TODO
+		.pixel_format = SG_PIXELFORMAT_R8,
 		.usage = SG_USAGE_STREAM,
 	});
 	sok_debug_image = sg_make_image(&(sg_image_desc) {
@@ -969,7 +984,6 @@ static void sapp_init(void)
 	saudio_setup(&(saudio_desc) {
 		.sample_rate = 44100,
 		.num_channels = 1,
-		.stream_cb = audio_sample_cb,
 		.logger.func = slog_func,
 	});
 

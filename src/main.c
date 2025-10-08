@@ -664,4 +664,7 @@ void app_update()
 
 	// tell OS that we've updated the whole screen
 	plat_gfx_mark_updated_rows(0, SCREEN_Y-1);
+
+	// process audio
+	plat_sound_update();
 }
