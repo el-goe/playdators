@@ -663,6 +663,15 @@ void plat_sound_play(PlatSound* sound, bool loop)
 	assert(sound);
 	sound->loop = loop;
 	sound->playing = true;
+	// remove from any currently playing slots
+	for (int i = 0; i < MAX_PLAYING_SOUNDS; ++i)
+	{
+		if (s_playing_sounds[i].sound == sound)
+		{
+			s_playing_sounds[i].sound = NULL;
+		}
+	}
+	// add into an empty slot
 	for (int i = 0; i < MAX_PLAYING_SOUNDS; ++i)
 	{
 		if (s_playing_sounds[i].sound == NULL)
