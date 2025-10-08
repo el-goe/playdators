@@ -27,7 +27,7 @@ typedef enum // match order of PDButtons
 
 typedef struct PlatBitmap PlatBitmap;
 typedef struct PlatFile PlatFile;
-typedef struct PlatFileMusicPlayer PlatFileMusicPlayer;
+typedef struct PlatSound PlatSound;
 
 void plat_gfx_clear(SolidColor color);
 uint8_t* plat_gfx_get_frame();
@@ -51,10 +51,16 @@ void plat_file_close(PlatFile* file);
 float plat_time_get();
 void plat_time_reset();
 
-PlatFileMusicPlayer* plat_audio_play_file(const char* file_path);
-bool plat_audio_is_playing(PlatFileMusicPlayer* music);
-float plat_audio_get_time(PlatFileMusicPlayer* music);
-void plat_audio_set_time(PlatFileMusicPlayer* music, float t);
+PlatSound* plat_sound_open_file(const char* file_path);
+void plat_sound_free(PlatSound* sound);
+void plat_sound_set_volume(PlatSound* sound, float volume);
+float plat_sound_get_volume(PlatSound* sound);
+void plat_sound_play(PlatSound* sound, bool loop);
+void plat_sound_stop(PlatSound* sound);
+bool plat_sound_is_playing(PlatSound* sound);
+float plat_sound_get_length(PlatSound* sound);
+float plat_sound_get_time(PlatSound* sound);
+void plat_sound_set_time(PlatSound* sound, float t);
 
 void plat_input_get_buttons(PlatButtons* current, PlatButtons* pushed, PlatButtons* released);
 float plat_input_get_crank_angle_rad();

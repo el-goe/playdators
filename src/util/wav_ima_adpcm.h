@@ -27,4 +27,4 @@ bool wav_parse_header(const void* data, size_t data_size, wav_file_desc* res);
 
 void wav_decode_state_init(const wav_file_desc* desc, wav_decode_state* state);
 
-void wav_ima_adpcm_decode(float* __restrict output, int sample_pos, int sample_count, const void* data, wav_decode_state* state);
+void wav_ima_adpcm_decode(float* __restrict output, int sample_pos, int sample_count, const void* data, wav_decode_state* state, float volume);

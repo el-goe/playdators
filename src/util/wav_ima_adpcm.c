@@ -2,7 +2,6 @@
 
 #include <stdbool.h>
 #include <stdint.h>
-#include <string.h>
 #include <assert.h>
 #include <stdlib.h>
 
@@ -110,7 +109,7 @@ static void wav_ima_adpcm_decode_block(float * __restrict output, const uint8_t 
 	}
 }
 
-void wav_ima_adpcm_decode(float* __restrict output, int sample_pos, int sample_count, const void* data, wav_decode_state* state)
+void wav_ima_adpcm_decode(float* __restrict output, int sample_pos, int sample_count, const void* data, wav_decode_state* state, float volume)
 {
 	while (sample_count > 0)
 	{
@@ -123,17 +122,21 @@ void wav_ima_adpcm_decode(float* __restrict output, int sample_pos, int sample_c
 			state->block_index = block_index;
 		}
 
-		// copy the needed chunk of decoded block into output
+		// add the needed chunk of decoded block into output
 		int pos_in_block = sample_pos - block_index * state->samples_per_block;
-		int samples_to_copy = state->samples_per_block - pos_in_block;
-		if (samples_to_copy > sample_count)
-			samples_to_copy = sample_count;
-		memcpy(output, state->block + pos_in_block, samples_to_copy * sizeof(float));
+		int samples_to_write = state->samples_per_block - pos_in_block;
+		if (samples_to_write > sample_count)
+			samples_to_write = sample_count;
+
+		for (int i = 0; i < samples_to_write; ++i)
+		{
+			output[i] += state->block[pos_in_block + i] * volume;
+		}
 
 		// advance
-		sample_pos += samples_to_copy;
-		sample_count -= samples_to_copy;
-		output += samples_to_copy;
+		sample_pos += samples_to_write;
+		sample_count -= samples_to_write;
+		output += samples_to_write;
 	}
 }
 

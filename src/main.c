@@ -107,7 +107,7 @@ static bool load_images()
 // ======== Audio
 
 static const char* kMusicPath = "audio_intro.pda";
-static PlatFileMusicPlayer* s_music;
+static PlatSound* s_music;
 
 // ======== Game state
 
@@ -587,7 +587,9 @@ void app_initialize()
 		return;
 	game_initialize();
 
-	s_music = plat_audio_play_file(kMusicPath);
+	s_music = plat_sound_open_file(kMusicPath);
+	if (s_music)
+		plat_sound_play(s_music, true);
 }
 
 void app_update()

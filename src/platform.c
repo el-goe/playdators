@@ -154,31 +154,73 @@ void plat_sys_log_error(const char* fmt, ...)
 	va_end(args);
 }
 
-PlatFileMusicPlayer* plat_audio_play_file(const char* file_path)
+PlatSound* plat_sound_open_file(const char* file_path)
 {
-	FilePlayer* music = s_pd->sound->fileplayer->newPlayer();
-	bool s_music_ok = s_pd->sound->fileplayer->loadIntoPlayer(music, file_path) != 0;
-	if (s_music_ok)
-	{
-		s_pd->sound->fileplayer->play(music, 0);
-		return (PlatFileMusicPlayer*)music;
+	FilePlayer* sound = s_pd->sound->fileplayer->newPlayer();
+	if (sound) {
+		bool ok = s_pd->sound->fileplayer->loadIntoPlayer(sound, file_path) != 0;
+		if (!ok) {
+			s_pd->sound->fileplayer->freePlayer(sound);
+			sound = NULL;
+		}
 	}
-	return NULL;
+	return (PlatSound*)sound;
 }
 
-bool plat_audio_is_playing(PlatFileMusicPlayer* music)
+void plat_sound_free(PlatSound* sound)
 {
-	return s_pd->sound->fileplayer->isPlaying((FilePlayer*)music) != 0;
+	FilePlayer* s = (FilePlayer*)sound;
+	s_pd->sound->fileplayer->freePlayer(s);
 }
 
-float plat_audio_get_time(PlatFileMusicPlayer* music)
+void plat_sound_set_volume(PlatSound* sound, float volume)
 {
-	return s_pd->sound->fileplayer->getOffset((FilePlayer*)music);
+	FilePlayer* s = (FilePlayer*)sound;
+	s_pd->sound->fileplayer->setVolume(s, volume, volume);
 }
 
-void plat_audio_set_time(PlatFileMusicPlayer* music, float t)
+float plat_sound_get_volume(PlatSound* sound)
 {
-	s_pd->sound->fileplayer->setOffset((FilePlayer*)music, t);
+	FilePlayer* s = (FilePlayer*)sound;
+	float voll, volr;
+	s_pd->sound->fileplayer->getVolume(s, &voll, &volr);
+	return (voll + volr) * 0.5f;
+}
+
+void plat_sound_play(PlatSound* sound, bool loop)
+{
+	FilePlayer* s = (FilePlayer*)sound;
+	s_pd->sound->fileplayer->play(s, loop ? 0 : 1);
+}
+
+void plat_sound_stop(PlatSound* sound)
+{
+	FilePlayer* s = (FilePlayer*)sound;
+	s_pd->sound->fileplayer->stop(s);
+}
+
+bool plat_sound_is_playing(PlatSound* sound)
+{
+	FilePlayer* s = (FilePlayer*)sound;
+	return s_pd->sound->fileplayer->isPlaying(s) != 0;
+}
+
+float plat_sound_get_length(PlatSound* sound)
+{
+	FilePlayer* s = (FilePlayer*)sound;
+	return s_pd->sound->fileplayer->getLength(s);
+}
+
+float plat_sound_get_time(PlatSound* sound)
+{
+	FilePlayer* s = (FilePlayer*)sound;
+	return s_pd->sound->fileplayer->getOffset(s);
+}
+
+void plat_sound_set_time(PlatSound* sound, float t)
+{
+	FilePlayer* s = (FilePlayer*)sound;
+	s_pd->sound->fileplayer->setOffset(s, t);
 }
 
 float plat_time_get()
@@ -530,20 +572,27 @@ void plat_sys_log_error(const char* fmt, ...)
 	va_end(args);
 }
 
-typedef struct PlatFileMusicPlayer {
-	uint8_t* file;
+typedef struct PlatSound {
+	uint8_t* file_data;
 	int file_size;
 	wav_file_desc wav;
 	wav_decode_state decode_state;
 	int decode_pos;
-} PlatFileMusicPlayer;
+	float volume;
+	bool loop;
+	bool playing;
+} PlatSound;
 
-static PlatFileMusicPlayer* s_current_music;
+#define MAX_PLAYING_SOUNDS (16)
 
-PlatFileMusicPlayer* plat_audio_play_file(const char* file_path)
+typedef struct PlatPlayingSound {
+	PlatSound* sound;
+} PlatPlayingSound;
+
+static PlatPlayingSound s_playing_sounds[MAX_PLAYING_SOUNDS];
+
+PlatSound* plat_sound_open_file(const char* file_path)
 {
-	s_current_music = NULL;
-
 	// read file into memory
 	char path[1000];
 	snprintf(path, sizeof(path), "%s/%s", s_data_path, file_path);
@@ -556,46 +605,112 @@ PlatFileMusicPlayer* plat_audio_play_file(const char* file_path)
 	if (file == NULL)
 		return NULL;
 
-	PlatFileMusicPlayer* res = (PlatFileMusicPlayer*)plat_malloc(sizeof(PlatFileMusicPlayer));
-	res->decode_pos = 0;
+	PlatSound* res = (PlatSound*)plat_calloc(sizeof(PlatSound));
 	fseek(file, 0, SEEK_END);
 	res->file_size = (int)ftell(file);
 	fseek(file, 0, SEEK_SET);
-	res->file = plat_malloc(res->file_size);
-	fread(res->file, 1, res->file_size, file);
+	res->file_data = plat_malloc(res->file_size);
+	fread(res->file_data, 1, res->file_size, file);
 	fclose(file);
 
 	// parse wav header
-	if (!wav_parse_header(res->file, res->file_size, &res->wav))
+	if (!wav_parse_header(res->file_data, res->file_size, &res->wav))
+	{
+		plat_sound_free(res);
 		return NULL;
+	}
 
 	if (res->wav.sample_format != 0x11) // not IMA ADPCM
+	{
+		plat_sound_free(res);
 		return NULL;
+	}
 
 	wav_decode_state_init(&res->wav, &res->decode_state);
-
-	s_current_music = res;
+	res->volume = 1.0f;
 	return res;
 }
 
-bool plat_audio_is_playing(PlatFileMusicPlayer* music)
+void plat_sound_free(PlatSound* sound)
 {
-	return music->decode_pos < music->wav.sample_count;
+	if (sound)
+	{
+		plat_sound_stop(sound);
+		plat_free(sound->file_data);
+		plat_free(sound);
+	}
 }
 
-float plat_audio_get_time(PlatFileMusicPlayer* music)
+void plat_sound_set_volume(PlatSound* sound, float volume)
 {
-	return music->decode_pos / 44100.0f;
+	assert(sound);
+	sound->volume = volume;
 }
 
-void plat_audio_set_time(PlatFileMusicPlayer* music, float t)
+float plat_sound_get_volume(PlatSound* sound)
+{
+	assert(sound);
+	return sound->volume;
+}
+
+void plat_sound_play(PlatSound* sound, bool loop)
+{
+	assert(sound);
+	sound->loop = loop;
+	sound->playing = true;
+	//@TODO: mutex, or switch to push model
+	for (int i = 0; i < MAX_PLAYING_SOUNDS; ++i)
+	{
+		if (s_playing_sounds[i].sound == NULL)
+		{
+			s_playing_sounds[i].sound = sound;
+			return;
+		}
+	}
+	//@TODO: if no free slot found, maybe stop oldest playing sound?
+}
+
+void plat_sound_stop(PlatSound* sound)
+{
+	assert(sound);
+
+	//@TODO: mutex, or switch to push model
+	for (int i = 0; i < MAX_PLAYING_SOUNDS; ++i)
+	{
+		if (s_playing_sounds[i].sound == sound)
+		{
+			s_playing_sounds[i].sound = NULL;
+		}
+	}
+	sound->playing = false;
+	sound->decode_pos = 0;
+}
+
+bool plat_sound_is_playing(PlatSound* sound)
+{
+	assert(sound);
+	return sound->playing && sound->decode_pos < sound->wav.sample_count;
+}
+
+float plat_sound_get_length(PlatSound* sound)
+{
+	assert(sound);
+	return sound->wav.sample_count / 44100.0f;
+}
+
+float plat_sound_get_time(PlatSound* sound)
+{
+	assert(sound);
+	return sound->decode_pos / 44100.0f;
+}
+void plat_sound_set_time(PlatSound* sound, float t)
 {
 	int sample_pos = (int)(t * 44100.0f);
 	if (sample_pos < 0)
 		sample_pos = 0;
-	if (sample_pos > music->wav.sample_count)
-		sample_pos = music->wav.sample_count;
-	music->decode_pos = sample_pos;
+	if (sample_pos > sound->wav.sample_count)
+		sample_pos = sound->wav.sample_count;
+	sound->decode_pos = sample_pos;
 }
 
 static uint64_t sok_start_time;
@@ -636,32 +751,54 @@ float plat_input_get_crank_delta_angle_rad()
 
 // sokol_app setup
 
-static void audio_sample_cb(float* buffer, int num_frames, int num_channels)
+static void audio_sample_cb(float* buffer, const int num_frames, const int num_channels)
 {
-	if (s_current_music == NULL)
-	{
-		memset(buffer, 0, num_frames * num_channels * sizeof(buffer[0]));
-		return;
-	}
-
 	assert(1 == num_channels);
 
-	int decode_frames = num_frames;
-	if (decode_frames > s_current_music->wav.sample_count - s_current_music->decode_pos)
-		decode_frames = s_current_music->wav.sample_count - s_current_music->decode_pos;
-	if (decode_frames < 0)
-		decode_frames = 0;
+	// set output to zero
+	memset(buffer, 0, num_frames * num_channels * sizeof(buffer[0]));
 
-	wav_ima_adpcm_decode(buffer, s_current_music->decode_pos, decode_frames, s_current_music->wav.sample_data, &s_current_music->decode_state);
+	// mix in all the playing sounds
+	for (int idx = 0; idx < MAX_PLAYING_SOUNDS; ++idx)
+	{
+		PlatSound* sound = s_playing_sounds[idx].sound;
+		if (sound == NULL)
+			continue;
+		assert(sound->playing);
 
-	if (decode_frames < num_frames)
-	{
-		memset(buffer + decode_frames * num_channels, 0, (num_frames - decode_frames) * num_channels * sizeof(buffer[0]));
-		s_current_music->decode_pos = 0; // loop to beginning
-	}
-	else
-	{
-		s_current_music->decode_pos += decode_frames;
+		if (sound->volume <= 1.0e-3f)
+			continue;
+
+		int decode_frames = num_frames;
+		if (decode_frames > sound->wav.sample_count - sound->decode_pos)
+			decode_frames = sound->wav.sample_count - sound->decode_pos;
+		if (decode_frames < 0)
+			decode_frames = 0;
+
+		wav_ima_adpcm_decode(buffer, sound->decode_pos, decode_frames, sound->wav.sample_data, &sound->decode_state, sound->volume);
+
+		if (decode_frames < num_frames)
+		{
+			// reached the end
+			if (sound->loop)
+			{
+				// loop to beginning
+				sound->decode_pos = 0;
+			}
+			else
+			{
+				// not looping: stop playing this sound
+				sound->playing = false;
+				sound->decode_pos = 0;
+				//@TODO: mutex, or switch to push model
+				s_playing_sounds[idx].sound = NULL;
+			}
+		}
+		else
+		{
+			sound->decode_pos += decode_frames;
+		}
+
 	}
 }
 
