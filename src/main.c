@@ -106,8 +106,42 @@ static bool load_images()
 
 // ======== Audio
 
-static const char* kMusicPath = "audio_intro.pda";
-static PlatSound* s_music;
+enum GameSound {
+	GameSound_Music,
+	GameSound_ChocomelRun0,
+	GameSound_ChocomelRun1,
+	GameSound_ChocomelRun2,
+	GameSound_ChocomelRun3,
+	GameSound_BushBounce,
+	GameSound_Dig,
+	GameSound_HumMellody,
+	GameSoundCount // keep last
+};
+static const char* kGameSoundNames[GameSoundCount] = {
+	"audio_intro.pda",
+	"audio_chocomel-run-0.pda",
+	"audio_chocomel-run-1.pda",
+	"audio_chocomel-run-2.pda",
+	"audio_chocomel-run-3.pda",
+	"audio_bush-bounce.pda",
+	"audio_dig.pda",
+	"audio_pinda-hum-happy-melody_1.pda",
+};
+static PlatSound* s_sounds[GameSoundCount];
+static bool load_sounds()
+{
+	for (int i = 0; i < GameSoundCount; ++i)
+	{
+		PlatSound* s = plat_sound_open_file(kGameSoundNames[i]);
+		if (!s)
+		{
+			plat_sys_log_error("Error: failed to load sound %s", kGameSoundNames[i]);
+			return false;
+		}
+		s_sounds[i] = s;
+	}
+	return true;
+}
 
 // ======== Game state
 
@@ -168,6 +202,12 @@ static void choco_anim_start(enum ChocomelAnims anim)
 {
 	if (anim == GS.choco_cur_anim)
 		return;
+
+	// sounds
+	if (anim == ChocoAnimDig)
+		plat_sound_play(s_sounds[GameSound_Dig], true);
+	else
+		plat_sound_stop(s_sounds[GameSound_Dig]);
 
 	// handle idle states
 	if (anim != ChocoAnimIdle && anim != ChocoAnimIdleSit)
@@ -431,6 +471,7 @@ static void update_game()
 	if (GS.move_speed >= k_run_speed && (G.buttons_cur & kPlatButtonUp) && GS.jump_cur_height <= 0.0f && !is_obstacle && !is_finished)
 	{
 		GS.jump_cur_velocity = 3.0f;
+		plat_sound_play(s_sounds[GameSound_BushBounce], false);
 	}
 	const float k_jump_gravity = 6.0f;
 	GS.jump_cur_velocity -= G.t_dt * k_jump_gravity;
@@ -462,7 +503,7 @@ static void update_game()
 	// Move based on current speed
 	GS.curve_t += GS.move_speed * G.t_dt * 0.01f;
 
-	// Switch to appropriate animation
+	// Switch to appropriate animation / sound
 	if (GS.jump_cur_height > 0.0f)
 		choco_anim_start(ChocoAnimTrot);
 	else if (do_dig)
@@ -585,11 +626,11 @@ void app_initialize()
 		return;
 	if (!load_images())
 		return;
+	if (!load_sounds())
+		return;
 	game_initialize();
 
-	s_music = plat_sound_open_file(kMusicPath);
-	if (s_music)
-		plat_sound_play(s_music, true);
+	plat_sound_play(s_sounds[GameSound_Music], true);
 }
 
 void app_update()
