@@ -67,11 +67,9 @@ demo (2024) and [Surface-Stable Fractal Dithering on Playdate](https://github.co
 `src/main.c` contains a simple "3D game", where Chocomel the dog (from Blender Studio DOG WALK game - [Steam](https://store.steampowered.com/app/3775050/DOGWALK/),
 [project page](https://studio.blender.org/projects/dogwalk/)) has to run along a 3D curve in space, jumping over or digging through obstacles.
 
-![](/images/playdators_choco_0.png?raw=true "")
-![](/images/playdators_choco_1.png?raw=true "")
-![](/images/playdators_choco_2.png?raw=true "")
-![](/images/playdators_choco_3.png?raw=true "")
-![](/images/playdators_choco_4.png?raw=true "")
+| | | | | |
+|---|---|---|---|---|
+| ![](/images/playdators_choco_0.png?raw=true "") | ![](/images/playdators_choco_1.png?raw=true "") | ![](/images/playdators_choco_2.png?raw=true "") | ![](/images/playdators_choco_3.png?raw=true "") | ![](/images/playdators_choco_4.png?raw=true "") |
 
 All the meshes there are from the [Dog Walk](https://studio.blender.org/projects/dogwalk/) project, and as such they are not particularly optimized for either Playdate, nor
 for a graphics engine that has no textures. I applied Blender's Decimate modifier on them, exported, and that's it.
