@@ -1,5 +1,9 @@
 ﻿# PlayDators - toy 3D engine for Playdate
 
+ ![](/images/playdators_choco_4.png?raw=true "")
+
+Everything is in pure C, there are no Lua bits (yet?).
+
 ### Graphics
 
 `src/render.h` contains a tiny 3D rasterizer.
