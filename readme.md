@@ -88,6 +88,16 @@ Playdate simulator build.
 `Source` folder is expected to have data files; some of these will be automatically processed by Playdate SDK tools while doing a build (e.g. PNG files will get converted to `.pdi`; WAV files
 to `.pda` and so on).
 
+Building for the web with Emscripten:
+- Have Emscripten [installed and the SDK activated](https://emscripten.org/docs/getting_started/downloads.html) on the command line.
+  I have tested with Emscripten 4.0.16 (2025 Oct).
+- Change current directory to this folder,
+- `cmake --preset emscripten-release`,
+- `cmake --build --preset em-release`
+- Built files will be under `build/emscripten_release` folder.
+- In order to test them locally in the browser, easiest to run a web server from that folder: `cd build\emscripten-release` and
+  `python -m http.server`, then open `localhost:8000` in your browser.
+
 Most of the code layout and structure is taken from [Everybody Wants to Crank the World](https://github.com/aras-p/demo-pd-cranktheworld)
 demo (2024) and [Surface-Stable Fractal Dithering on Playdate](https://github.com/aras-p/playdate-dither3d) (2025).
 

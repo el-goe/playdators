@@ -141,7 +141,7 @@ else()
 			-sALLOW_MEMORY_GROWTH=1
 			-sMALLOC=emmalloc
 			--embed-file data
-			--shell-file=../web/shell.html)
+			--shell-file=../../web/shell.html)
 		if (CMAKE_BUILD_TYPE STREQUAL "Release")
 			target_compile_options(${PLAYDATE_GAME_NAME} PRIVATE -flto)
 			target_link_options(${PLAYDATE_GAME_NAME} PRIVATE -flto --closure 1)

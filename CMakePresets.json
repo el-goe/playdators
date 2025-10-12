@@ -64,7 +64,9 @@
         {
             "name": "emscripten-base",
             "hidden": true,
-            "toolchainFile": "emsdk/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake"
+            "inherits": "all-base",
+            "generator": "Ninja",
+            "toolchainFile": "$env{EMSDK}/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake"
         },
         {
             "name": "emscripten-debug",
@@ -81,6 +83,24 @@
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release"
             }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "build-base",
+            "hidden": true
+        },
+        {
+            "name": "em-debug",
+            "displayName": "Build Emscripten Debug",
+            "inherits": "build-base",
+            "configurePreset": "emscripten-debug"
+        },
+        {
+            "name": "em-release",
+            "displayName": "Build Emscripten Release",
+            "inherits": "build-base",
+            "configurePreset": "emscripten-release"
         }
     ]
 }
