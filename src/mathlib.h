@@ -102,7 +102,7 @@ static inline uint16_t float_to_half(float x)
 			uint32_t mant_odd = (f.u >> 13) & 1; // resulting mantissa is odd
 
 			// update exponent, rounding bias part 1
-			f.u += ((15 - 127) << 23) + 0xfff;
+			f.u += ((uint32_t)(15 - 127) << 23) + 0xfff;
 			// rounding bias part 2
 			f.u += mant_odd;
 			// take the bits!
