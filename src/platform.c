@@ -1146,7 +1146,7 @@ sapp_desc sokol_main(int argc, char* argv[]) {
 		.width = SCREEN_X * 2,
 		.height = SCREEN_Y * 2,
 		.high_dpi = true,
-		.window_title = "Render Test",
+		.window_title = "PlayDators Sample",
 		.icon.sokol_default = true,
 		.logger.func = slog_func,
 	};

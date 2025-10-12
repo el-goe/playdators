@@ -6,11 +6,11 @@
       "type": "dll",
       "exe": "${env.PLAYDATE_SDK_PATH}\\bin\\PlaydateSimulator.exe",
       "project": "CMakeLists.txt",
-      "projectTarget": "Playdate_RenderTest.dll",
-      "name": "Playdate_RenderTest.dll",
+      "projectTarget": "PlayDators_Sample.dll",
+      "name": "PlayDators_Sample.dll",
       "program": "${env.PLAYDATE_SDK_PATH}\\bin\\PlaydateSimulator.exe",
       "args": [
-        "${workspaceRoot}\\Playdate_RenderTest.pdx"
+        "${workspaceRoot}\\PlayDators_Sample.pdx"
       ]
     }
   ]

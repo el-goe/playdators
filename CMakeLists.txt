@@ -42,8 +42,8 @@ set(CMAKE_CONFIGURATION_TYPES "Debug;Release;RelWithDebInfo")
 set(CMAKE_XCODE_GENERATE_SCHEME TRUE)
 
 # Game name
-set(PLAYDATE_GAME_NAME Playdate_RenderTest)
-set(PLAYDATE_GAME_DEVICE Playdate_RenderTest_DEVICE)
+set(PLAYDATE_GAME_NAME PlayDators_Sample)
+set(PLAYDATE_GAME_DEVICE PlayDators_Sample_DEVICE)
 
 project(${PLAYDATE_GAME_NAME} C ASM)
 
@@ -87,8 +87,8 @@ elseif(APPLE)
 	add_executable(${PLAYDATE_GAME_NAME} MACOSX_BUNDLE ${DEMO_SOURCES})
 	set_target_properties(${PLAYDATE_GAME_NAME} PROPERTIES
 		BUNDLE True
-		MACOSX_BUNDLE_GUI_IDENTIFIER org.nesnausk.pd-rendertest
-		MACOSX_BUNDLE_BUNDLE_NAME "Render Test"
+		MACOSX_BUNDLE_GUI_IDENTIFIER org.nesnausk.playdators-sample
+		MACOSX_BUNDLE_BUNDLE_NAME "PlayDators Sample"
 		MACOSX_BUNDLE_BUNDLE_VERSION "0.1"
 		MACOSX_BUNDLE_SHORT_VERSION_STRING "0.1"
 	)

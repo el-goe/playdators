@@ -1,7 +1,6 @@
-bundleID=org.nesnausk.pd-rendertest
+bundleID=org.nesnausk.playdators-sample
 version=1.0.0
 buildNumber=1
-name=Render Test
+name=PlayDators Sample
 author=Aras Pranckevicius
-description=Rendering Test
-
+description=PlayDators Sample
