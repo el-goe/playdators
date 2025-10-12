@@ -1,4 +1,4 @@
-﻿# PlayDators - toy 3D engine for Playdate
+﻿# PlayDators - simple 3D engine for Playdate
 
  ![](/images/playdators_choco_2.png?raw=true "")
 
