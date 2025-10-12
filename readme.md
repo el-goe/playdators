@@ -1,8 +1,33 @@
 ﻿# PlayDators - toy 3D engine for Playdate
 
- ![](/images/playdators_choco_4.png?raw=true "")
+ ![](/images/playdators_choco_2.png?raw=true "")
 
-Everything is in pure C, there are no Lua bits (yet?).
+Simple 3D software rasterizer and helping code for [Playdate](https://play.date/) console. The same code can also be built for PC. Everything is in pure C, there are no Lua bits (yet?).
+
+"Dators" means "computer" in Latvian. I don't know Latvian, but I like the word.
+
+ ### Sample application / "game"
+
+`src/main.c` contains a simple "3D game", where Chocomel the dog (from Blender Studio DOG WALK game - [project page](https://studio.blender.org/projects/dogwalk/), [steam page](https://store.steampowered.com/app/3775050/DOGWALK/)) has to run along a 3D curve in space, jumping over or digging through obstacles.
+
+| | |
+|---|---|
+| ![](/images/playdators_choco_0.png?raw=true "") | ![](/images/playdators_choco_1.png?raw=true "") |
+| ![](/images/playdators_choco_3.png?raw=true "") | ![](/images/playdators_choco_4.png?raw=true "") |
+
+All the meshes there are from the [Dog Walk](https://studio.blender.org/projects/dogwalk/) project, and as such they are not particularly optimized for either Playdate, nor
+for a graphics engine that has no textures. I applied Blender's Decimate modifier on them at 15-20% of original poly count, exported, and that's it.
+
+The music and sounds are from the Dog Walk project as well, converted to IMA ADPCM in Audacity.
+
+The game tends to render 500-1000 visible triangles as well as a bunch of triangle edges, at runs at 45-50 frames per second on the Playdate device.
+
+Controls:
+- Right: move Chocomel,
+- Up: jump (can only do that while running),
+- B: dig through an obstacle,
+- Crank / mouse wheel: orbit the camera a bit.
+- A: toggle rendering between simple dithering and blue-noise dithering.
 
 ### Graphics
 
@@ -65,30 +90,6 @@ to `.pda` and so on).
 
 Most of the code layout and structure is taken from [Everybody Wants to Crank the World](https://github.com/aras-p/demo-pd-cranktheworld)
 demo (2024) and [Surface-Stable Fractal Dithering on Playdate](https://github.com/aras-p/playdate-dither3d) (2025).
-
-### Sample application / "game"
-
-`src/main.c` contains a simple "3D game", where Chocomel the dog (from Blender Studio DOG WALK game - [Steam](https://store.steampowered.com/app/3775050/DOGWALK/),
-[project page](https://studio.blender.org/projects/dogwalk/)) has to run along a 3D curve in space, jumping over or digging through obstacles.
-
-| | | | | |
-|---|---|---|---|---|
-| ![](/images/playdators_choco_0.png?raw=true "") | ![](/images/playdators_choco_1.png?raw=true "") | ![](/images/playdators_choco_2.png?raw=true "") | ![](/images/playdators_choco_3.png?raw=true "") | ![](/images/playdators_choco_4.png?raw=true "") |
-
-All the meshes there are from the [Dog Walk](https://studio.blender.org/projects/dogwalk/) project, and as such they are not particularly optimized for either Playdate, nor
-for a graphics engine that has no textures. I applied Blender's Decimate modifier on them, exported, and that's it.
-
-The music and sounds are from the Dog Walk project as well, converted to IMA ADPCM in Audacity.
-
-The game tends to render 500-1000 visible triangles as well as a bunch of triangle edges, at runs at 45-50 frames per second on the Playdate device.
-
-Controls:
-- Right: move Chocomel,
-- Up: jump (can only do that while running),
-- B: dig through an obstacle,
-- Crank / mouse wheel: orbit the camera a bit.
-- A: toggle rendering between simple dithering and blue-noise dithering.
-
 
 ### License
 
