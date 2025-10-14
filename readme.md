@@ -10,6 +10,8 @@ Simple 3D software rasterizer and helping code for [Playdate](https://play.date/
 
 `src/main.c` contains a simple "3D game", where Chocomel the dog (from Blender Studio DOG WALK game - [project page](https://studio.blender.org/projects/dogwalk/), [steam page](https://store.steampowered.com/app/3775050/DOGWALK/)) has to run along a 3D curve in space, jumping over or digging through obstacles.
 
+**Web build of the sample game**: https://aras-p.github.io/playdators/ (~1MB)
+
 | | |
 |---|---|
 | ![](/images/playdators_choco_0.png?raw=true "") | ![](/images/playdators_choco_1.png?raw=true "") |
