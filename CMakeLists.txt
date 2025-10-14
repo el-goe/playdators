@@ -140,7 +140,8 @@ else()
 	elseif (EMSCRIPTEN)
 		set(CMAKE_EXECUTABLE_SUFFIX .html)
 		target_link_options(${PLAYDATE_GAME_NAME} PRIVATE
-			-sUSE_WEBGL2=1
+			-sMIN_WEBGL_VERSION=2
+			-sMAX_WEBGL_VERSION=2
 			-sALLOW_MEMORY_GROWTH=1
 			-sMALLOC=emmalloc
 			--embed-file data
