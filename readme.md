@@ -4,7 +4,7 @@
 
 Simple 3D software rasterizer and helping code for [Playdate](https://play.date/) console. The same code can also be built for PC. Everything is in pure C, there are no Lua bits (yet?).
 
-"Dators" means "computer" in Latvian. I don't know Latvian, but I like the word.
+_"Dators" means "computer" in Latvian. I don't know Latvian, but I like the word._
 
  ### Sample application / "game"
 
