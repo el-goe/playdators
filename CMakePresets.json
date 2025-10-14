@@ -65,6 +65,7 @@
             "name": "emscripten-base",
             "hidden": true,
             "inherits": "all-base",
+            "generator": "Ninja",
             "toolchainFile": "$env{EMSDK}/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake"
         },
         {
