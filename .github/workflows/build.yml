@@ -30,14 +30,11 @@ jobs:
         run: |
           git clone https://github.com/emscripten-core/emsdk
           cd emsdk
-          ./emsdk install 3.1.60
-          ./emsdk activate 3.1.60
+          ./emsdk install 4.0.16
+          ./emsdk activate 4.0.16
           cd ..
+          source emsdk/emsdk_env.sh
       - name: build
         run: |
-          mkdir build
-          cd build
-          cmake --preset emscripten-debug ..
-          cmake --build . --clean-first
-          cmake --preset emscripten-release ..
-          cmake --build . --clean-first
+          cmake --preset emscripten-release
+          cmake --build --preset em-release
