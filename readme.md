@@ -10,7 +10,7 @@ _"Dators" means "computer" in Latvian. I don't know Latvian, but I like the word
 
 `src/main.c` contains a simple "3D game", where Chocomel the dog (from **Blender Studio DOG WALK game** - [project page](https://studio.blender.org/projects/dogwalk/), [steam page](https://store.steampowered.com/app/3775050/DOGWALK/)) has to run along a 3D curve in space, jumping over or digging through obstacles.
 
-**Web build of the sample game**: https://aras-p.github.io/playdators/ (1MB).
+**Web build of the sample game**: https://aras-p.github.io/playdators/ (1MB). <br/>
 **Playdate build of the game**: https://aras-p.info/files/games/2025_playdators/PlayDators_Sample.pdx.zip (1MB) -- should work on Playdate device and the simulator on Windows.
 
 | | |
