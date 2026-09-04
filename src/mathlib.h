@@ -343,7 +343,16 @@ static inline float3 v3_reflect(float3 v, float3 n)
 	return v3_sub(v, v3_mulfl(n, 2 * v3_dot(v, n)));
 }
 
-float3 v3_tri_normal(const float3* p1, const float3* p2, const float3* p3);
+// Inlined for the same reason as xform_transform_pt below: scene_draw calls it
+// once per LIT triangle (about half of every mesh survives backface culling),
+// and out of line that is a call plus a 3-float struct return each time.
+static inline float3 v3_tri_normal(const float3* p1, const float3* p2, const float3* p3)
+{
+	float3 v = v3_cross(
+		f3(p2->x - p1->x, p2->y - p1->y, p2->z - p1->z),
+		f3(p3->x - p1->x, p3->y - p1->y, p3->z - p1->z));
+	return v3_normalize(v);
+}
 
 typedef struct xform
 {
@@ -357,7 +366,17 @@ xform xform_make_translate(float dx, float dy, float dz);
 xform xform_make_axis_angle(float angle, float3 axis);
 // transforms multiply right to left, i.e. `r` is child transform, followed by `l` parent transform
 xform xform_multiply(const xform* l, const xform* r);
-float3 xform_transform_pt(const xform* m, float3 p);
+// Inlined deliberately: this is called once per VERTEX from scene_draw's
+// transform loop, which is the hottest call site in the engine. Out of line it
+// costs a call, a struct-by-value argument and a 3-float struct return per
+// vertex, and it was 5.9% of a dense frame by callgrind attribution.
+static inline float3 xform_transform_pt(const xform* m, float3 p)
+{
+	float x = p.x * m->ax.x + p.y * m->ay.x + p.z * m->az.x + m->pos.x;
+	float y = p.x * m->ax.y + p.y * m->ay.y + p.z * m->az.y + m->pos.y;
+	float z = p.x * m->ax.z + p.y * m->ay.z + p.z * m->az.z + m->pos.z;
+	return f3(x, y, z);
+}
 float xform_get_determinant(xform* m);
 xform xform_look_at(float3 pos, float3 target, float3 up);
 xform xform_invert(const xform* m);

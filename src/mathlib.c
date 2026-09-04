@@ -2,14 +2,6 @@
 
 #include "mathlib.h"
 
-float3 v3_tri_normal(const float3* p1, const float3* p2, const float3* p3)
-{
-	float3 v = v3_cross(
-		f3(p2->x - p1->x, p2->y - p1->y, p2->z - p1->z),
-		f3(p3->x - p1->x, p3->y - p1->y, p3->z - p1->z));
-	return v3_normalize(v);
-}
-
 xform xform_identity = { .ax = {1, 0, 0}, .ay = {0, 1, 0}, .az = {0, 0, 1}, .pos = {0, 0, 0} };
 
 xform xform_make(float xx, float xy, float xz, float yx, float yy, float yz, float zx, float zy, float zz)
@@ -68,14 +60,6 @@ xform xform_multiply(const xform* l, const xform* r)
 	m.pos.y = l->pos.y + l->ax.y * r->pos.x + l->ay.y * r->pos.y + l->az.y * r->pos.z;
 	m.pos.z = l->pos.z + l->ax.z * r->pos.x + l->ay.z * r->pos.y + l->az.z * r->pos.z;
 	return m;
-}
-
-float3 xform_transform_pt(const xform* m, float3 p)
-{
-	float x = p.x * m->ax.x + p.y * m->ay.x + p.z * m->az.x + m->pos.x;
-	float y = p.x * m->ax.y + p.y * m->ay.y + p.z * m->az.y + m->pos.y;
-	float z = p.x * m->ax.z + p.y * m->ay.z + p.z * m->az.z + m->pos.z;
-	return f3(x, y, z);
 }
 
 float xform_get_determinant(xform* m)

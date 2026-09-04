@@ -268,6 +268,39 @@ static void draw_mesh_instance(Scene* scene, uint8_t* buffer, int rowstride, con
 	const xform* matrix = &inst->tr;
 	const bool use_silhouette = inst->flags & MeshDrawFlag_SilhouetteWire;
 
+	// Conservative bounding-sphere reject against the view frustum, done BEFORE
+	// anything else: without it every vertex of an off-screen instance is still
+	// transformed and projected. All tests are in squared form, so no sqrt.
+	{
+		const float3 c = xform_transform_pt(&scene->view_xform, xform_transform_pt(matrix, mesh->center));
+		const float3 ext = v3_mulfl(v3_sub(mesh->bbox_max, mesh->bbox_min), 0.5f);
+		// instance transform may scale: use its largest axis, squared throughout
+		const float scl2 = max2f(max2f(v3_lensq(matrix->ax), v3_lensq(matrix->ay)), v3_lensq(matrix->az));
+		const float r2 = v3_lensq(ext) * scl2;
+		const float r = sqrtf(r2);
+
+		// entirely nearer than the near plane (matches k_min_z below)
+		if (c.z + r < 0.015f)
+			return;
+
+		const float S = scene->scale;
+		const float px = 1.6666666f * scene->centerx * S;
+		const float py = scene->centery * S;
+		// Each screen edge is a plane through the eye. A sphere is outside when
+		// it is on the wrong side by more than its radius.
+		float f, nz;
+		f = S * c.x + px * c.z;                       // left:  screen_x >= 0
+		if (f < 0.0f && f * f > r2 * (S * S + px * px)) return;
+		nz = px - (float)SCREEN_X;                    // right: screen_x < SCREEN_X
+		f = S * c.x + nz * c.z;
+		if (f > 0.0f && f * f > r2 * (S * S + nz * nz)) return;
+		f = S * c.y + py * c.z;                       // top
+		if (f < 0.0f && f * f > r2 * (S * S + py * py)) return;
+		nz = py - (float)SCREEN_Y;                    // bottom
+		f = S * c.y + nz * c.z;
+		if (f > 0.0f && f * f > r2 * (S * S + nz * nz)) return;
+	}
+
 	// temporary buffers
 	if (scene->tmp_points_cap < mesh->vertex_count) {
 		scene->tmp_points_cap = mesh->vertex_count;
@@ -300,6 +333,10 @@ static void draw_mesh_instance(Scene* scene, uint8_t* buffer, int rowstride, con
 	}
 
 	// transform points
+	//
+	// Model and view are folded into one transform per instance, so each vertex
+	// costs one matrix-vector product instead of two.
+	const xform mv = xform_multiply(&scene->view_xform, matrix);
 	int frame = clamp_i(inst->frame, 0, mesh->vertex_frame_count - 1);
 	if ((mesh->flags & MeshFlag_FloatVertices) == 0)
 	{
@@ -309,14 +346,10 @@ static void draw_mesh_instance(Scene* scene, uint8_t* buffer, int rowstride, con
 		const float3 bbox_scale = v3_mul(v3_sub(mesh->bbox_max, mesh->bbox_min), f3(1.0f / 2047.0f, 1.0f / 1023.0f, 1.0f / 2047.0f));
 		for (int i = 0; i < mesh->vertex_count; ++i)
 		{
-			const uint32_t v_bits = *src_vtx;
-			const uint32_t v_bits_x = v_bits & 2047;
-			const uint32_t v_bits_y = (v_bits >> 11) & 1023;
-			const uint32_t v_bits_z = v_bits >> 21;
-			float3 v_pos = { (float)v_bits_x, (float)v_bits_y, (float)v_bits_z };
+			const uint32_t v_bits = src_vtx[i];
+			float3 v_pos = { (float)(v_bits & 2047), (float)((v_bits >> 11) & 1023), (float)(v_bits >> 21) };
 			v_pos = v3_add(v3_mul(v_pos, bbox_scale), bbox_min);
-			scene->tmp_view_points[i] = xform_transform_pt(&scene->view_xform, xform_transform_pt(matrix, v_pos));
-			++src_vtx;
+			scene->tmp_view_points[i] = xform_transform_pt(&mv, v_pos);
 		}
 	}
 	else
@@ -324,10 +357,7 @@ static void draw_mesh_instance(Scene* scene, uint8_t* buffer, int rowstride, con
 		// vertices in floating point
 		const float3* src_vtx = (const float3*)mesh->vertices + frame * mesh->vertex_count;
 		for (int i = 0; i < mesh->vertex_count; ++i)
-		{
-			scene->tmp_view_points[i] = xform_transform_pt(&scene->view_xform, xform_transform_pt(matrix, *src_vtx));
-			++src_vtx;
-		}
+			scene->tmp_view_points[i] = xform_transform_pt(&mv, src_vtx[i]);
 	}
 
 	// project points to screen

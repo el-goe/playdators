@@ -2,6 +2,22 @@
 
 #include "mathlib.h"
 
+// ---------------------------------------------------------------------------
+// This is a fork of playdators with four changes, all unconditional:
+//
+//   1. xform_transform_pt and v3_tri_normal are inlined in mathlib.h. They were
+//      out-of-line calls in the per-vertex and per-lit-triangle loops.
+//   2. scene_draw folds model x view into one transform per vertex instead of
+//      two.
+//   3. draw_mesh_instance rejects whole instances against the frustum with a
+//      bounding sphere before transforming any of their vertices.
+//   4. radixsort_upper16keys falls back to insertion sort below 64 elements.
+//
+// Together they measured +6% to +36% depending on scene. Only (2) changes
+// output at all, and only by floating-point reassociation. See
+// playdators-opt.patch and the README in the benchmark repo.
+// ---------------------------------------------------------------------------
+
 enum MeshFlags {
 	MeshFlag_FloatVertices = (1 << 0)
 };
