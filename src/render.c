@@ -3,7 +3,9 @@
 #include "platform.h"
 #include "util/adjacency_generator.h"
 #include "util/radixsort.h"
+#include "util/pixel_ops.h"
 #include <string.h>
+#include <stdlib.h>   // _byteswap_ulong on MSVC
 
 // Parts of the scanline rasterizer were originally based on
 // - mini3d from Playdate SDK examples. Created by Dave Hayden on 10/20/15. Copyright © 2015 Panic, Inc. All rights reserved.
@@ -30,10 +32,12 @@ static void draw_black_fragment(uint32_t* row, int x1, int x2)
 	
 	// Operate on 32 bits at a time
 	
+	// Unsigned, and without a shift by 32: the signed forms were undefined at
+	// startbit 0 and endbit 31. Same masks wherever they are used.
 	int startbit = x1 % 32;
-	uint32_t startmask = swap((1 << (32 - startbit)) - 1);
+	uint32_t startmask = swap(0xFFFFFFFFu >> startbit);
 	int endbit = x2 % 32;
-	uint32_t endmask = swap(((1 << endbit) - 1) << (32 - endbit));
+	uint32_t endmask = endbit ? swap(~(0xFFFFFFFFu >> endbit)) : 0u;
 	
 	int col = x1 / 32;
 	uint32_t* p = row + col;
@@ -140,13 +144,19 @@ void scene_init(Scene* scene)
 void scene_shutdown(Scene* scene)
 {
 	plat_free(scene->tmp_view_points);
-	plat_free(scene->tmp_proj_points);
+	plat_free(scene->tmp_vert_codes);
+	plat_free(scene->tmp_fix_points);
 	plat_free(scene->tmp_order_table1);
 	plat_free(scene->tmp_order_table2);
 	plat_free(scene->instances);
 	plat_free(scene->tmp_inst_order_table1);
 	plat_free(scene->tmp_inst_order_table2);
 	plat_free(scene->line_buf);
+	plat_free(scene->tmp_clip_pts);
+	plat_free(scene->tmp_clip_src);
+	plat_free(scene->tmp_scene_tris);
+	plat_free(scene->tmp_scene_order1);
+	plat_free(scene->tmp_scene_order2);
 }
 
 void scene_setLight(Scene* scene, float3 light)
@@ -209,31 +219,317 @@ static Pattern patterns[] =
 	{ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff }
 };
 
-static void draw_triangle(uint8_t* bitmap, int rowstride, const float3* p1, const float3* p2, const float3* p3, const float brightness, enum MeshDrawFlags draw_flags, const uint8_t wire_flags, enum SceneDrawFlags scene_draw_flags)
+// --------------------------------------------------------------------------
+// The fixed-point rasterizer
+//
+// Chris Hecker's edge walk, exactly as rasterizer_scanline.h's tri_edge_init
+// and tri_edge_step have it -- same 28.4 inputs, same Ceil28_4, same
+// floor-division DDA, so the same pixels -- but taking the points already in
+// 28.4 (see SceneTri) instead of converting three floats per edge per draw.
+// It lives here rather than in rasterizer_scanline.h so that this project's
+// changes to the engine stay in render.c and render.h.
+//
+// What is cheaper, and why it matters on the M7:
+//   * no float work at all per triangle: the conversions happened once, when
+//     the triangle was queued;
+//   * Ceil28_4 is a shift. The original branches on the sign and divides;
+//     (v + 15) >> 4 is the same floor for every int, sign included;
+//   * the span fill works in shifts and whole words -- no division or modulo
+//     by 32, and the row pointer and pattern row step instead of being
+//     recomputed from Y each line.
+// --------------------------------------------------------------------------
+
+FORCE_INLINE int fx_ceil28_4(int v)
 {
-	if (draw_flags & MeshDrawFlag_Solid)
+	// ceil(v / 16) for a 28.4 value: floor((v - 1 + 16) / 16), and an
+	// arithmetic shift IS floor division by 16 for negative values too.
+	return (v + 15) >> 4;
+}
+
+// A byte swap the compiler can see through. mathlib.h's swap() is an asm
+// volatile REV, which the compiler may neither move, merge nor fold into a
+// constant -- in the fill below that is two or three extra register moves a
+// span, and a mask known at compile time still paying for a REV at run time.
+// __builtin_bswap32 compiles to the same REV where one is needed.
+FORCE_INLINE uint32_t fx_swap(uint32_t v)
+{
+#if defined(_MSC_VER)
+	return _byteswap_ulong(v);
+#else
+	return __builtin_bswap32(v);
+#endif
+}
+
+// One span of a dither pattern, [x, endx), on one row. 0 <= x < endx <= 400.
+// Bit order is the display's: the leftmost pixel of a word is the top bit of
+// its first byte, so masks are built big-endian and byte-swapped.
+FORCE_INLINE void fx_span_pattern(uint32_t* row, int x, int endx, uint32_t color)
+{
+	uint32_t* p = row + (x >> 5);
+	uint32_t* const last = row + (endx >> 5);
+	const uint32_t startmask = 0xFFFFFFFFu >> (x & 31);
+	const uint32_t endmask = (endx & 31) ? ~(0xFFFFFFFFu >> (endx & 31)) : 0u;
+
+	if (p == last)
 	{
-		if ((scene_draw_flags & SceneDrawFlag_DitherBluenoise) == 0)
+		// One word. endx cannot sit on a word boundary here, so endmask is
+		// not empty.
+		const uint32_t m = fx_swap(startmask & endmask);
+		*p = (*p & ~m) | (color & m);
+		return;
+	}
+	if (x & 31)
+	{
+		const uint32_t m = fx_swap(startmask);
+		*p = (*p & ~m) | (color & m);
+		++p;
+	}
+	while (p < last)
+		*p++ = color;
+	if (endmask)
+	{
+		const uint32_t m = fx_swap(endmask);
+		*p = (*p & ~m) | (color & m);
+	}
+}
+
+// One span of blue noise: each pixel is set where the triangle's level is
+// above the noise at that pixel. As draw_scanline_bluenoise has it.
+FORCE_INLINE void fx_span_bluenoise(uint32_t* row, const uint8_t* noise_row,
+                                    int x, int endx, uint8_t level)
+{
+	uint32_t* p = row + (x >> 5);
+	uint32_t mask = 0, color = 0;
+	while (x < endx)
+	{
+		const uint32_t bit = 0x80000000u >> (x & 31);
+		mask |= bit;
+		if (level > noise_row[x])
+			color |= bit;
+		x++;
+		if ((x & 31) == 0)
 		{
-			// dither pattern
-			int pat_idx = clamp_i((int)(brightness * 32.99f), 0, 32);
-			const uint8_t* pattern = (const uint8_t*)&patterns[pat_idx];
-			draw_tri_pattern(bitmap, rowstride, p1, p2, p3, pattern);
-		}
-		else
-		{
-			// blue noise
-			int color = clamp_i((int)(brightness * 255.0f), 0, 255);
-			draw_tri_bluenoise(bitmap, rowstride, p1, p2, p3, color);
+			const uint32_t m = fx_swap(mask), c = fx_swap(color);
+			*p = (mask == 0xFFFFFFFFu) ? c : ((*p & ~m) | (c & m));
+			++p;
+			mask = 0;
+			color = 0;
 		}
 	}
-	//@TODO: draw_tri_checker via some flag/option
-
-	if (draw_flags & (MeshDrawFlag_Wire | MeshDrawFlag_SilhouetteWire))
+	if (mask)
 	{
-		if (wire_flags & 1) draw_black_line(bitmap, rowstride, p1, p2);
-		if (wire_flags & 2) draw_black_line(bitmap, rowstride, p2, p3);
-		if (wire_flags & 4) draw_black_line(bitmap, rowstride, p3, p1);
+		const uint32_t m = fx_swap(mask), c = fx_swap(color);
+		*p = (*p & ~m) | (c & m);
+	}
+}
+
+#if defined(_MSC_VER)
+#  define FX_NOINLINE __declspec(noinline)
+#else
+#  define FX_NOINLINE __attribute__((noinline))
+#endif
+
+// THE DITHER PATTERNS AS WORDS. A pattern row is one byte repeated across
+// the screen; the fill writes 32 pixels at a time, so it wants that byte
+// already in all four lanes of a word. Built once, 33 x 8 words.
+static uint32_t s_pat32[33][8];
+static bool     s_pat32_ready;
+
+static void fx_init_patterns(void)
+{
+	if (s_pat32_ready)
+		return;
+	for (int i = 0; i < 33; ++i)
+		for (int r = 0; r < 8; ++r)
+			s_pat32[i][r] = (uint32_t)patterns[i][r] * 0x01010101u;
+	s_pat32_ready = true;
+}
+
+// THE ROWS OF ONE HALF OF A TRIANGLE, between two edges.
+//
+// Out of line and one per fill, deliberately: inlined into the triangle it
+// shared registers with the whole setup, and the M7 build kept the edge walk
+// on the stack. Here the loop is the only thing live -- two edges, the row,
+// the pattern -- and it all stays in registers. The edges come in by pointer
+// and go back out, because the long edge carries on into the next half.
+static FX_NOINLINE void fx_rows_pattern(uint8_t* row, int rowstride, int y, int height,
+                            uint32_t* lFp, int32_t lS, uint32_t* rFp, int32_t rS,
+                            const uint32_t* pat)
+{
+	uint32_t lF = *lFp, rF = *rFp;
+	for (; height > 0; --height)
+	{
+		int x = (int32_t)lF >> 16;
+		int endx = (int32_t)rF >> 16;
+		if (x < 0) x = 0;
+		if (endx > SCREEN_X) endx = SCREEN_X;
+		if (x < endx)
+			fx_span_pattern((uint32_t*)row, x, endx, pat[y & 7]);
+		lF += (uint32_t)lS;
+		rF += (uint32_t)rS;
+		row += rowstride;
+		++y;
+	}
+	*lFp = lF;
+	*rFp = rF;
+}
+
+static FX_NOINLINE void fx_rows_bluenoise(uint8_t* row, int rowstride, int y, int height,
+                              uint32_t* lFp, int32_t lS, uint32_t* rFp, int32_t rS,
+                              const uint8_t* noise, uint8_t level)
+{
+	uint32_t lF = *lFp, rF = *rFp;
+	for (; height > 0; --height)
+	{
+		int x = (int32_t)lF >> 16;
+		int endx = (int32_t)rF >> 16;
+		if (x < 0) x = 0;
+		if (endx > SCREEN_X) endx = SCREEN_X;
+		if (x < endx)
+			fx_span_bluenoise((uint32_t*)row, noise + y * SCREEN_X, x, endx, level);
+		lF += (uint32_t)lS;
+		rF += (uint32_t)rS;
+		row += rowstride;
+		++y;
+	}
+	*lFp = lF;
+	*rFp = rF;
+}
+
+// THE EDGE WALK, IN 16.16.
+//
+// This was Chris Hecker's exact DDA -- an integer x, a step, and a remainder
+// carried against a denominator -- which costs two divisions per edge to set
+// up and five live registers and a compare-and-branch per edge per row to
+// walk. Triangles here average four and a half rows, so the walk and its
+// register pressure were most of what a row cost: the M7 build spilled half
+// of the loop's state to the stack.
+//
+// In 16.16 an edge is two registers and an add. It is not exact: the slope is
+// truncated to 1/65536 of a pixel, so after n rows the edge can be n/65536 of
+// a pixel off where the exact walk had it -- under a hundredth of a pixel for
+// the tallest edge the guard band allows -- and a pixel centre that the true
+// edge passes within that distance of can land on the other side. That is
+// the whole of the difference, and it is a few pixels a frame.
+//
+// It fits: the guard band keeps every projected x in [-512, 912], so a slope
+// in 28.4 over 28.4 is at most 22,784 * 65536 before the divide, inside an
+// int32; and the start point is one 32x32->64 multiply, which is a single
+// SMULL on the M7.
+//
+// The same raster rule as before: rows whose centre is inside [top, bottom),
+// pixels whose centre is inside [left, right) -- the points arrive already
+// offset by half a pixel, so "centre inside" is ceil of the edge's x. The
+// 0xFFFF bias makes that ceil a plain shift.
+//
+// An edge's slope and its x at the centre of row Y, for the walk above:
+// 16.16, the start biased by 0xFFFF so that x >> 16 is the ceil. dN > 0.
+FORCE_INLINE int32_t fx_slope(int32_t dM, int32_t dN)
+{
+	return (int32_t)((uint32_t)dM * 65536u) / dN;
+}
+
+FORCE_INLINE uint32_t fx_start(int32_t topX, int32_t topY, int Y, int32_t S)
+{
+	// The top vertex, plus the slope times how far below it row Y's centre
+	// is -- in sixteenths, so the product is sixteen times too big.
+	const int64_t down = (int64_t)(16 * Y - topY) * S;
+	return (uint32_t)(topX * 4096 + (int32_t)(down >> 4)) + 0xFFFFu;
+}
+
+// Fills one triangle. `bluenoise` picks the fill; `shade` is its pattern
+// index or its level accordingly.
+//
+// Three rows matter -- the first centre at or below the top vertex, the
+// middle one, the bottom -- and every edge's extent is a difference of two
+// of them, so each is worked out once. The long edge (top to bottom) is set
+// up always; each short edge only if its half has a row in it, which for a
+// small triangle is often only one of them.
+static void fx_fill_triangle(uint8_t* bitmap, int rowstride, const SceneTri* t,
+                             bool bluenoise)
+{
+	const int32_t X0 = t->x[0], X1 = t->x[1], X2 = t->x[2];
+	const int32_t Y0 = t->y[0], Y1 = t->y[1], Y2 = t->y[2];
+	int32_t tx, ty, mx, my, bx, by;
+	bool mid_is_left;
+
+	// tri_sort_vertices, on the fixed-point values. Which side the middle
+	// vertex is on follows from the winding -- every queued triangle faces
+	// the camera -- and so from the order the sort found them in.
+	if (Y0 < Y1)
+	{
+		if (Y2 < Y0)      { tx = X2; ty = Y2; mx = X0; my = Y0; bx = X1; by = Y1; mid_is_left = false; }
+		else if (Y1 < Y2) { tx = X0; ty = Y0; mx = X1; my = Y1; bx = X2; by = Y2; mid_is_left = false; }
+		else              { tx = X0; ty = Y0; mx = X2; my = Y2; bx = X1; by = Y1; mid_is_left = true;  }
+	}
+	else
+	{
+		if (Y2 < Y1)      { tx = X2; ty = Y2; mx = X1; my = Y1; bx = X0; by = Y0; mid_is_left = true;  }
+		else if (Y0 < Y2) { tx = X1; ty = Y1; mx = X0; my = Y0; bx = X2; by = Y2; mid_is_left = true;  }
+		else              { tx = X1; ty = Y1; mx = X2; my = Y2; bx = X0; by = Y0; mid_is_left = false; }
+	}
+
+	const int row_top = clamp_i(fx_ceil28_4(ty), 0, SCREEN_Y);
+	const int row_mid = clamp_i(fx_ceil28_4(my), 0, SCREEN_Y);
+	const int row_bot = clamp_i(fx_ceil28_4(by), 0, SCREEN_Y);
+	if (row_bot <= row_top)
+		return;           // no scanline centre inside it at all
+
+	// The long edge, walked across both halves.
+	const int32_t sl = fx_slope(bx - tx, by - ty);
+	uint32_t fl = fx_start(tx, ty, row_top, sl);
+
+	const uint32_t* pat = NULL;
+	const uint8_t* noise = NULL;
+	if (!bluenoise)
+		pat = s_pat32[t->shade <= 32 ? t->shade : 32];
+	else
+		noise = get_blue_noise_buffer();
+
+	// The top half, then the bottom, each between the long edge and one
+	// short one. mid_is_left true means the LONG edge is on the LEFT -- the
+	// name is upstream's (raster_scanline_simple_begin1/2).
+	for (int half = 0; half < 2; ++half)
+	{
+		const int y  = half ? row_mid : row_top;
+		const int h  = half ? row_bot - row_mid : row_mid - row_top;
+		if (h <= 0)
+			continue;
+		const int32_t ss = half ? fx_slope(bx - mx, by - my) : fx_slope(mx - tx, my - ty);
+		uint32_t fs = half ? fx_start(mx, my, y, ss) : fx_start(tx, ty, y, ss);
+		uint8_t* row = bitmap + y * rowstride;
+		uint32_t* lF = mid_is_left ? &fl : &fs;
+		uint32_t* rF = mid_is_left ? &fs : &fl;
+		const int32_t lS = mid_is_left ? sl : ss;
+		const int32_t rS = mid_is_left ? ss : sl;
+		if (pat)
+			fx_rows_pattern(row, rowstride, y, h, lF, lS, rF, rS, pat);
+		else
+			fx_rows_bluenoise(row, rowstride, y, h, lF, lS, rF, rS, noise, t->shade);
+	}
+}
+
+// The float point a 28.4 value came from, near enough for a wire line.
+FORCE_INLINE float3 fx_to_point(int x, int y)
+{
+	return f3((float)x * (1.0f / 16.0f) + 0.5f, (float)y * (1.0f / 16.0f) + 0.5f, 0.0f);
+}
+
+static void draw_scene_tri(uint8_t* bitmap, int rowstride, const SceneTri* t,
+                           enum SceneDrawFlags scene_draw_flags)
+{
+	if (t->flags & MeshDrawFlag_Solid)
+		fx_fill_triangle(bitmap, rowstride, t,
+		                 (scene_draw_flags & SceneDrawFlag_DitherBluenoise) != 0);
+
+	if (t->flags & (MeshDrawFlag_Wire | MeshDrawFlag_SilhouetteWire))
+	{
+		const float3 p1 = fx_to_point(t->x[0], t->y[0]);
+		const float3 p2 = fx_to_point(t->x[1], t->y[1]);
+		const float3 p3 = fx_to_point(t->x[2], t->y[2]);
+		if (t->wire_flag & 1) draw_black_line(bitmap, rowstride, &p1, &p2);
+		if (t->wire_flag & 2) draw_black_line(bitmap, rowstride, &p2, &p3);
+		if (t->wire_flag & 4) draw_black_line(bitmap, rowstride, &p3, &p1);
 	}
 }
 
@@ -257,10 +553,539 @@ static inline uint32_t pack_depth_index(float z, uint32_t index)
 
 static bool is_face_visible(const Scene* scene, uint16_t fi)
 {
-	return (fi != 0xFFFF) && (scene->tmp_vis_tris_mask[fi >> 5] & (1 << (fi & 31)));
+	return (fi != 0xFFFF) && (scene->tmp_vis_tris_mask[fi >> 5] & (1u << (fi & 31)));
 }
 
-static void draw_mesh_instance(Scene* scene, uint8_t* buffer, int rowstride, const MeshInstance* inst, enum SceneDrawFlags scene_draw_flags)
+// --------------------------------------------------------------------------
+// Clipping
+//
+// Two things have to be bounded before a triangle reaches the rasterizer.
+//
+// NEAR PLANE. A triangle with every vertex in front of it goes down the fast
+// path untouched; one with every vertex behind it is dropped. The remainder
+// is cut against z = k_near_z in VIEW space, which leaves a triangle or a
+// quad. Upstream drops these whole, which is invisible in a scene viewed from
+// outside and takes the roof off when you are standing inside a tunnel.
+//
+// GUARD BAND. tri_edge_init sets up its DDA in 28.4 fixed point and forms
+// products of order dN * topXfx -- about 1024 * C^2 for a projected
+// coordinate of magnitude C. That overflows int32 above C of roughly 1400,
+// and the result is a garbage edge slope: a triangle that rasterizes as a
+// wrong, usually enormous, filled shape.
+//
+// C gets large because projection divides by view z, and near the near plane
+// that divisor is tiny: a vertex at z = k_near_z one unit off axis projects
+// to 16000 pixels. Measured over a lap of Virtua Racing, unclipped geometry
+// alone reaches 435000 pixels and clipped geometry reaches 1000000, so this
+// is NOT only a consequence of near clipping -- upstream has it too, for any
+// vertex that sits just in front of the near plane. Near clipping makes it
+// far more common by placing vertices exactly there.
+//
+// So the projected polygon is also clipped to a band around the screen. That
+// is exact rather than approximate: the polygon really is cut, not clamped,
+// and this renderer interpolates nothing across a triangle -- the fill is a
+// flat brightness and both dither modes are indexed by screen position -- so
+// a 2D clip after the perspective divide changes no pixel inside the band.
+//
+// The clipped vertices have no vertex index of their own, so they go in a
+// scratch list and the sort refers to them as mesh->tri_count + n;
+// tmp_clip_src maps back to the source triangle for its colour, its adjacency
+// and its visibility bit. The lighting normal is taken from the source
+// triangle too: a piece is coplanar with its parent, so the parent's normal
+// is exactly right and costs nothing.
+// --------------------------------------------------------------------------
+
+// The near plane, in world units. Upstream's 0.015 is not a considered
+// value -- it is an epsilon to keep the perspective divide finite, from a
+// renderer that never clips and only needs "not zero". Once triangles are
+// CLIPPED to this plane rather than dropped at it, it becomes a real near
+// plane and the number matters:
+//
+//   * A vertex clipped to z = 0.015 projects at 240/0.015 = 16000 pixels per
+//     world unit off axis, so a clipped ground polygon becomes enormous and
+//     is drawn in full. Over a lap of Acropolis the worst frame cost 256k
+//     fill pixels, nearly three screenfuls, against 174k unclipped.
+//   * At 0.25 the same worst frame costs 165k -- BELOW the unclipped build,
+//     which pays its own price for the rasterizer overflow the guard band
+//     now prevents. The median cost of clipping drops to about 6%.
+//
+// 0.25 world units is 64 ROM units, and it costs nothing visible: the eye
+// rides 1.1 units above the road, so the plane cuts the ground at a screen
+// row far below the bottom of the display. What it does cut is geometry the
+// camera is almost touching, which is what a near plane is for.
+static const float k_near_z = 0.25f;   // must match k_min_z below
+
+// Half the margin the guard band adds around the screen. The bound above
+// wants max |coordinate| under about 1400; SCREEN_X + 512 is 912, which
+// leaves the products an order of magnitude of headroom. Making it smaller
+// only means clipping more often -- it cannot change what is drawn.
+#define CLIP_GUARD 512.0f
+#define CLIP_X0 (-CLIP_GUARD)
+#define CLIP_X1 ((float)SCREEN_X + CLIP_GUARD)
+#define CLIP_Y0 (-CLIP_GUARD)
+#define CLIP_Y1 ((float)SCREEN_Y + CLIP_GUARD)
+
+// OUTCODES. One byte per vertex, worked out where the vertex is projected,
+// saying which side of each screen edge and of the guard band it is on. The
+// cull loop then rejects on the AND of three bytes and asks for guard-band
+// clipping on their OR, without reloading and comparing nine floats a
+// triangle. A vertex behind the near plane has no projection, so it carries
+// VC_NEAR and nothing else.
+//
+// The screen bits are taken from the vertex's 28.4 point, the one the
+// rasterizer will fill from, and they say "every pixel centre is on the far
+// side of this edge": x < 0 in 28.4-with-offset is a vertex left of every
+// column's centre, x >= 400 * 16 one right of all of them. So a triangle with
+// all three corners off one edge covers no pixel, which is the only thing the
+// reject needs to be true -- and it is exactly true, where the float test it
+// replaced was half a pixel out in each direction. A triangle it disagreed
+// about drew nothing either way.
+enum
+{
+	VC_LEFT   = 1 << 0,
+	VC_RIGHT  = 1 << 1,
+	VC_TOP    = 1 << 2,
+	VC_BOTTOM = 1 << 3,
+	VC_SCREEN = VC_LEFT | VC_RIGHT | VC_TOP | VC_BOTTOM,
+	VC_GUARD  = 1 << 4,   // outside the guard band on some axis
+	VC_NEAR   = 1 << 5,   // z < k_near_z: no projection
+};
+
+// The outcode and the 28.4 point of a projected vertex, in one go. `xf`
+// and `yf` are the screen point already in 28.4 with the half-pixel offset
+// taken off -- (x - 0.5) * 16 -- still as floats.
+//
+// Outside the guard band the point is not converted at all -- it could be
+// anywhere, and a float out of an int's range is undefined -- and the
+// triangle goes to the float clipping path, which never reads it. The screen
+// bits there come from the floats, by the same rule.
+#define GUARD16_X0 ((CLIP_X0 - 0.5f) * 16.0f)
+#define GUARD16_X1 ((CLIP_X1 - 0.5f) * 16.0f)
+#define GUARD16_Y0 ((CLIP_Y0 - 0.5f) * 16.0f)
+#define GUARD16_Y1 ((CLIP_Y1 - 0.5f) * 16.0f)
+
+FORCE_INLINE uint8_t vert_fix(float xf, float yf, uint32_t* fix)
+{
+	if (fabsf(xf - 0.5f * (GUARD16_X0 + GUARD16_X1)) > 0.5f * (GUARD16_X1 - GUARD16_X0) ||
+	    fabsf(yf - 0.5f * (GUARD16_Y0 + GUARD16_Y1)) > 0.5f * (GUARD16_Y1 - GUARD16_Y0))
+	{
+		*fix = 0;
+		return (uint8_t)(VC_GUARD
+		               | (xf < 0.0f)
+		               | ((xf >= (float)(SCREEN_X * 16)) << 1)
+		               | ((yf < 0.0f) << 2)
+		               | ((yf >= (float)(SCREEN_Y * 16)) << 3));
+	}
+	const int32_t xi = (int32_t)xf;
+	const int32_t yi = (int32_t)yf;
+	*fix = (uint32_t)(uint16_t)xi | ((uint32_t)yi << 16);
+	return (uint8_t)((xi < 0)
+	               | ((xi >= SCREEN_X * 16) << 1)
+	               | ((yi < 0) << 2)
+	               | ((yi >= SCREEN_Y * 16) << 3));
+}
+
+// A view-space point on the screen, for the paths that still want floats:
+// the guard-band clipper, a few triangles a frame.
+FORCE_INLINE float3 project_pt(float3 v, float scale, float add_x, float add_y)
+{
+	const float inv_z = scale / v.z;
+	return f3(v.x * inv_z + add_x, v.y * inv_z + add_y, v.z);
+}
+
+FORCE_INLINE int32_t fix_x(uint32_t f) { return (int16_t)(f & 0xFFFFu); }
+FORCE_INLINE int32_t fix_y(uint32_t f) { return (int32_t)f >> 16; }
+
+// The depth a triangle sorts on. Normally its own; for a decal, the depth of
+// the surface it is painted on, so the two can never cross.
+//
+// A coplanar decal and its host are ordered by an offset of a few hundredths
+// of a unit, and that only decides while their centroids are at the same
+// depth. The host is large, so turning the camera swings its centroid several
+// units while the decal's barely moves; the host's key overtakes and the
+// decal is painted over. Borrowing the key makes them tie at every angle, and
+// the stable radix sort plus the exporter's host-then-decal ordering keeps
+// the decal on top. See group_decals in tools/vr_track_export.py.
+static inline float sort_depth(const Scene* scene, const Mesh* mesh, int tri,
+                               uint16_t idx0, uint16_t idx1, uint16_t idx2)
+{
+	if (mesh->sort_proxy)
+	{
+		const uint16_t src = mesh->sort_proxy[tri];
+		if (src != tri)
+		{
+			const uint16_t* pb = mesh->tris + (size_t)src * 3;
+			idx0 = pb[0]; idx1 = pb[1]; idx2 = pb[2];
+		}
+	}
+	// tmp_sort_bias is the instance's sort_bias, tripled, because this is a
+	// sum of three depths rather than one. Upstream added sort_bias to the
+	// instance's centre depth in scene_draw; with instances no longer the
+	// unit of ordering it has to reach the triangles instead, and this is the
+	// one place every path -- fast, guard band, near clip -- goes through.
+	return scene->tmp_sort_bias
+	     - (scene->tmp_view_points[idx0].z
+	      + scene->tmp_view_points[idx1].z
+	      + scene->tmp_view_points[idx2].z);
+}
+
+static int clip_scratch_reserve(Scene* scene, int want)
+{
+	if (want <= scene->clip_cap)
+		return 1;
+	int cap = scene->clip_cap ? scene->clip_cap : 64;
+	while (cap < want)
+		cap *= 2;
+	float3* pts = plat_realloc(scene->tmp_clip_pts, (size_t)cap * 3 * sizeof(float3));
+	if (!pts)
+		return 0;
+	scene->tmp_clip_pts = pts;
+	uint16_t* src = plat_realloc(scene->tmp_clip_src, (size_t)cap * sizeof(uint16_t));
+	if (!src)
+		return 0;   // pts kept; clip_cap not bumped, so the space is just unused
+	scene->tmp_clip_src = src;
+	scene->clip_cap = cap;
+	return 1;
+}
+
+// Sutherland-Hodgman against one axis-aligned half-plane in 2D.
+// side: 0 = x >= limit, 1 = x <= limit, 2 = y >= limit, 3 = y <= limit.
+static int clip_poly_axis(const float3* in, int n, float3* out, int side, float limit)
+{
+	int m = 0;
+	for (int i = 0; i < n; ++i)
+	{
+		const float3 a = in[i];
+		const float3 b = in[(i + 1) % n];
+		const float av = (side < 2) ? a.x : a.y;
+		const float bv = (side < 2) ? b.x : b.y;
+		const bool a_in = (side == 0 || side == 2) ? (av >= limit) : (av <= limit);
+		const bool b_in = (side == 0 || side == 2) ? (bv >= limit) : (bv <= limit);
+		if (a_in)
+			out[m++] = a;
+		if (a_in != b_in)
+		{
+			// One endpoint each side, so bv - av cannot be zero.
+			const float t = (limit - av) / (bv - av);
+			out[m].x = a.x + (b.x - a.x) * t;
+			out[m].y = a.y + (b.y - a.y) * t;
+			out[m].z = a.z + (b.z - a.z) * t;
+			++m;
+		}
+	}
+	return m;
+}
+
+// Cuts `poly` (n projected points, in mesh winding order) to the guard band,
+// fans the result, and appends whatever survives to the order table.
+// Returns how many entries were appended.
+static int emit_clipped_poly(Scene* scene, const Mesh* mesh, uint16_t tri,
+                             const float3* poly, int n, float sort_key,
+                             bool use_silhouette, int vis_tri_count)
+{
+	// Two buffers, ping-ponged through the four half-planes. Four vertices in,
+	// at most one new vertex per plane, so eight is the ceiling.
+	float3 buf_a[8], buf_b[8];
+	const float3* cur = poly;
+
+	float minx = poly[0].x, maxx = poly[0].x;
+	float miny = poly[0].y, maxy = poly[0].y;
+	for (int i = 1; i < n; ++i)
+	{
+		minx = min2f(minx, poly[i].x); maxx = max2f(maxx, poly[i].x);
+		miny = min2f(miny, poly[i].y); maxy = max2f(maxy, poly[i].y);
+	}
+
+	// Entirely off screen: nothing to draw, and no need to clip it first.
+	if (maxx < 0.0f || minx >= (float)SCREEN_X ||
+		maxy < 0.0f || miny >= (float)SCREEN_Y)
+		return 0;
+
+	if (minx < CLIP_X0 || maxx > CLIP_X1 || miny < CLIP_Y0 || maxy > CLIP_Y1)
+	{
+		n = clip_poly_axis(cur, n, buf_a, 0, CLIP_X0); cur = buf_a; if (n < 3) return 0;
+		n = clip_poly_axis(cur, n, buf_b, 1, CLIP_X1); cur = buf_b; if (n < 3) return 0;
+		n = clip_poly_axis(cur, n, buf_a, 2, CLIP_Y0); cur = buf_a; if (n < 3) return 0;
+		n = clip_poly_axis(cur, n, buf_b, 3, CLIP_Y1); cur = buf_b; if (n < 3) return 0;
+	}
+
+	int tri_count = n - 2;
+	// The order table is indexed straight, so this is the only thing standing
+	// between a mis-sized allocation and a write past the end of it.
+	if (vis_tri_count + tri_count > scene->order_cap)
+		tri_count = scene->order_cap - vis_tri_count;
+	if (tri_count <= 0)
+		return 0;
+	if (!clip_scratch_reserve(scene, scene->clip_count + tri_count))
+		return 0;
+
+	int emitted = 0;
+	for (int t = 0; t < tri_count; ++t)
+	{
+		const float3 q0 = cur[0];
+		const float3 q1 = cur[t + 1];
+		const float3 q2 = cur[t + 2];
+
+		// Same winding rule as the fast path -- clipping preserves orientation.
+		const float d = (q1.x - q0.x) * (q2.y - q0.y) - (q1.y - q0.y) * (q2.x - q0.x);
+		if (d <= 0)
+			continue;
+
+		const int c = scene->clip_count;
+		scene->tmp_clip_pts[c * 3 + 0] = q0;
+		scene->tmp_clip_pts[c * 3 + 1] = q1;
+		scene->tmp_clip_pts[c * 3 + 2] = q2;
+		scene->tmp_clip_src[c] = tri;
+		scene->clip_count = c + 1;
+
+		// sort_key comes from the SOURCE triangle, not from q0/q1/q2.
+		//
+		// A clipped piece has vertices sitting exactly on the near plane, so
+		// its own depth midpoint is the smallest one possible, and it would
+		// sort in front of everything. A ground triangle running fifty units
+		// into the distance would be drawn last purely because it happens to
+		// pass under the camera, covering every object standing on it.
+		//
+		// That is what "big polygons crossing the screen" looked like after
+		// near clipping was added, and it cost the fill to match: the worst
+		// frame of a lap of Acropolis rose from 174k pixels to 256k, nearly
+		// three screenfuls, because a near-plane polygon was being painted
+		// over the whole scene.
+		//
+		// Keying on the parent keeps a piece exactly where the triangle it
+		// came from would have sorted, so clipping changes what is drawn
+		// without changing the order it is drawn in.
+		scene->tmp_order_table1[vis_tri_count + emitted] =
+			pack_depth_index(sort_key, (uint32_t)(mesh->tri_count + c));
+		++emitted;
+	}
+
+	if (emitted && use_silhouette)
+		scene->tmp_vis_tris_mask[tri >> 5] |= 1u << (tri & 31);
+
+	return emitted;
+}
+
+// Straddles the near plane: cut in view space, project, then hand to the
+// guard-band path above.
+static int clip_triangle_near(Scene* scene, const Mesh* mesh, uint16_t tri,
+                              uint16_t idx0, uint16_t idx1, uint16_t idx2,
+                              float scene_scale, float proj_add_x, float proj_add_y,
+                              bool use_silhouette, int vis_tri_count)
+{
+	const float3 in[3] = {
+		scene->tmp_view_points[idx0],
+		scene->tmp_view_points[idx1],
+		scene->tmp_view_points[idx2],
+	};
+	float3 poly[4];
+	int n = 0;
+	for (int e = 0; e < 3; ++e)
+	{
+		const float3 a = in[e];
+		const float3 b = in[(e + 1) % 3];
+		const bool a_in = a.z >= k_near_z;
+		const bool b_in = b.z >= k_near_z;
+		if (a_in)
+			poly[n++] = a;
+		if (a_in != b_in)
+		{
+			const float t = (k_near_z - a.z) / (b.z - a.z);
+			poly[n].x = a.x + (b.x - a.x) * t;
+			poly[n].y = a.y + (b.y - a.y) * t;
+			poly[n].z = k_near_z;
+			++n;
+		}
+	}
+	if (n < 3)
+		return 0;
+
+	float3 pp[4];
+	for (int k = 0; k < n; ++k)
+	{
+		const float inv_z = scene_scale / poly[k].z;
+		pp[k].x = poly[k].x * inv_z + proj_add_x;
+		pp[k].y = poly[k].y * inv_z + proj_add_y;
+		pp[k].z = poly[k].z;
+	}
+
+	// Depth from the source triangle, with each vertex pulled up to the near
+	// plane first: the part behind the camera has no depth worth averaging,
+	// and a negative z would pack into a nonsense key.
+	float key;
+	if (mesh->sort_proxy && mesh->sort_proxy[tri] != tri)
+	{
+		// Borrowed key: take the host's, clamped the same way.
+		const uint16_t* pb = mesh->tris + (size_t)mesh->sort_proxy[tri] * 3;
+		key = -(max2f(scene->tmp_view_points[pb[0]].z, k_near_z)
+		      + max2f(scene->tmp_view_points[pb[1]].z, k_near_z)
+		      + max2f(scene->tmp_view_points[pb[2]].z, k_near_z));
+	}
+	else
+	{
+		const float z0 = max2f(in[0].z, k_near_z);
+		const float z1 = max2f(in[1].z, k_near_z);
+		const float z2 = max2f(in[2].z, k_near_z);
+		key = -(z0 + z1 + z2);
+	}
+
+	return emit_clipped_poly(scene, mesh, tri, pp, n, key,
+	                         use_silhouette, vis_tri_count);
+}
+
+// ONE NORMAL PER FACE, IN THE MESH'S OWN SPACE, built once.
+//
+// The lighting used to take each visible triangle's normal from its three
+// view-space points every frame: two subtractions, a cross product and a
+// normalise -- a square root and a divide, each about fourteen cycles on the
+// M7's FPU. The mesh does not change shape, so the normal only changes by the
+// instance's rotation, and the light can be turned the other way instead,
+// once per instance (light_in_model below). Same number, one dot product.
+//
+// Computed with the same function on the same dequantised points the vertex
+// loop sees, so the result differs from the old one only in float rounding.
+// Meshes with several vertex frames change shape and keep the old path.
+static const float3* mesh_face_normals(Mesh* mesh)
+{
+	if (mesh->face_normals)
+		return mesh->face_normals;
+	if (mesh->vertex_frame_count != 1 || mesh->tri_count <= 0)
+		return NULL;
+	float3* n = plat_malloc((size_t)mesh->tri_count * sizeof(float3));
+	float3* v = plat_malloc((size_t)mesh->vertex_count * sizeof(float3));
+	if (!n || !v)
+	{
+		plat_free(n);
+		plat_free(v);
+		return NULL;
+	}
+	if ((mesh->flags & MeshFlag_FloatVertices) == 0)
+	{
+		const uint32_t* src = (const uint32_t*)mesh->vertices;
+		const float3 bbox_scale = v3_mul(v3_sub(mesh->bbox_max, mesh->bbox_min), f3(1.0f / 2047.0f, 1.0f / 1023.0f, 1.0f / 2047.0f));
+		for (int i = 0; i < mesh->vertex_count; ++i)
+		{
+			const uint32_t b = src[i];
+			const float3 q = { (float)(b & 2047), (float)((b >> 11) & 1023), (float)(b >> 21) };
+			v[i] = v3_add(v3_mul(q, bbox_scale), mesh->bbox_min);
+		}
+	}
+	else
+	{
+		memcpy(v, mesh->vertices, (size_t)mesh->vertex_count * sizeof(float3));
+	}
+	for (int t = 0; t < mesh->tri_count; ++t)
+	{
+		const uint16_t* ib = mesh->tris + t * 3;
+		// The same argument order the view-space version used: 0, 2, 1.
+		n[t] = v3_tri_normal(&v[ib[0]], &v[ib[2]], &v[ib[1]]);
+	}
+	plat_free(v);
+	mesh->face_normals = n;
+	return n;
+}
+
+// The view-space light, in the space of a mesh drawn with model-view `mv`.
+//
+// With view points p' = M p + t, a face's view normal is
+// normalize(cross(M a, M b)) = sign(det M) * R n for M = s R, R orthonormal
+// -- a uniform scale s and a rotation, possibly mirrored, which is every
+// transform this renderer is given (the view flips y). So
+// dot(n_view, L) = dot(n, sign(det M) * R^T L), and R^T L is M^T L
+// normalised. Nine multiplies and a normalise, once per instance.
+static float3 light_in_model(const xform* mv, float3 light)
+{
+	const float3 l = f3(v3_dot(mv->ax, light), v3_dot(mv->ay, light), v3_dot(mv->az, light));
+	const float det = v3_dot(mv->ax, v3_cross(mv->ay, mv->az));
+	const float3 n = v3_normalize(l);
+	return det < 0.0f ? v3_neg(n) : n;
+}
+
+// The brightness into what the fill indexes by: a dither pattern, or a
+// blue-noise threshold. draw_triangle made the same two conversions at draw
+// time.
+FORCE_INLINE uint8_t shade_of(float brightness, bool bluenoise)
+{
+	return bluenoise
+		? (uint8_t)clamp_i((int)(brightness * 255.0f), 0, 255)
+		: (uint8_t)clamp_i((int)(brightness * 32.99f), 0, 32);
+}
+
+// EACH FACE'S SHADE, KEPT WHILE NOTHING IT DEPENDS ON CHANGES.
+//
+// A face's shade is its colour, the instance's colour, and -- lit -- its
+// normal against the light in the mesh's own space. For a piece of course
+// all of those are fixed: the mesh does not move and the sun does not either,
+// so the light in model space is the same vector every frame, give or take
+// float noise from going to view space and back. Relighting every visible
+// face every frame worked out the same byte again and again.
+//
+// So the byte is kept. It is trusted only while the light, the colour and
+// the fill are what it was built for; and it is only BUILT once a mesh has
+// been drawn twice running under the same light, because building covers
+// every face and not just the visible ones -- which a mesh that turns every
+// frame, like the car, would pay for and never get back. That mesh keeps the
+// per-visible-face path it always had. An unlit mesh has no light to agree
+// on and is cached on its first draw.
+//
+// "The same light" is within 1e-4 per component. The frame-to-frame noise
+// is around 1e-7; the car turning by a hundredth of a degree is more than
+// the tolerance.
+#define SHADE_LIGHT_TOL 1e-4f
+
+FORCE_INLINE bool light_close(float3 a, float3 b)
+{
+	return fabsf(a.x - b.x) < SHADE_LIGHT_TOL
+	    && fabsf(a.y - b.y) < SHADE_LIGHT_TOL
+	    && fabsf(a.z - b.z) < SHADE_LIGHT_TOL;
+}
+
+static const uint8_t* face_shades(Mesh* mesh, const MeshInstance* inst,
+                                  const float3* normals, float3 light_m,
+                                  bool use_lighting, bool bluenoise)
+{
+	// Several vertex frames: the normals come from this frame's points.
+	if (use_lighting && normals == NULL)
+		return NULL;
+
+	const uint8_t mode = (uint8_t)((use_lighting ? 1 : 0) | (bluenoise ? 2 : 0));
+	const bool same_as_last = light_close(light_m, mesh->shade_seen);
+	mesh->shade_seen = light_m;
+
+	if (mesh->face_shade != NULL && mesh->shade_mode == mode
+	    && mesh->shade_color == inst->color
+	    && (!use_lighting || light_close(light_m, mesh->shade_light)))
+		return mesh->face_shade;
+
+	if (use_lighting && !same_as_last)
+		return NULL;      // turning relative to the light: not worth keeping
+
+	if (mesh->face_shade == NULL)
+	{
+		mesh->face_shade = plat_malloc((size_t)mesh->tri_count);
+		if (mesh->face_shade == NULL)
+			return NULL;
+	}
+	for (int f = 0; f < mesh->tri_count; ++f)
+	{
+		float brightness = inst->color;
+		if (use_lighting)
+			brightness *= v3_dot(normals[f], light_m) * 0.5f + 0.5f;
+		if (mesh->colors)
+			brightness *= mesh->colors[f] * (1.0f / 255.0f);
+		mesh->face_shade[f] = shade_of(brightness, bluenoise);
+	}
+	mesh->shade_light = light_m;
+	mesh->shade_color = inst->color;
+	mesh->shade_mode  = mode;
+	return mesh->face_shade;
+}
+
+// Transform, cull, clip and shade one instance, and queue what survives for
+// the scene-wide sort in scene_draw. This used to draw as well -- hence the
+// name it had, draw_mesh_instance -- and the split is the whole of the fix
+// described at SceneTri in render.h.
+static void collect_mesh_instance(Scene* scene, const MeshInstance* inst)
 {
 	Mesh* mesh = inst->mesh;
 	if (!mesh)
@@ -301,14 +1126,24 @@ static void draw_mesh_instance(Scene* scene, uint8_t* buffer, int rowstride, con
 		if (f > 0.0f && f * f > r2 * (S * S + nz * nz)) return;
 	}
 
+	scene->tmp_sort_bias = -3.0f * inst->sort_bias;
+
 	// temporary buffers
 	if (scene->tmp_points_cap < mesh->vertex_count) {
 		scene->tmp_points_cap = mesh->vertex_count;
 		scene->tmp_view_points = plat_realloc(scene->tmp_view_points, scene->tmp_points_cap * sizeof(scene->tmp_view_points[0]));
-		scene->tmp_proj_points = plat_realloc(scene->tmp_proj_points, scene->tmp_points_cap * sizeof(scene->tmp_proj_points[0]));
+		scene->tmp_vert_codes = plat_realloc(scene->tmp_vert_codes, scene->tmp_points_cap * sizeof(scene->tmp_vert_codes[0]));
+		scene->tmp_fix_points = plat_realloc(scene->tmp_fix_points, scene->tmp_points_cap * sizeof(scene->tmp_fix_points[0]));
 	}
-	if (scene->order_cap < mesh->tri_count) {
-		scene->order_cap = mesh->tri_count;
+	// Six entries per triangle, not one. A triangle can fan into that many:
+	// the near plane cuts it to a quad, the guard band's four half-planes add
+	// at most one vertex each, so eight, and an eight-sided polygon fans into
+	// six. Four is the most a lap of any of these courses actually reaches --
+	// but the table is indexed without a bound check in the loop below, so
+	// the allocation is the bound, and it is sized for the worst case rather
+	// than the measured one. emit_clipped_poly stops at order_cap as well.
+	if (scene->order_cap < mesh->tri_count * 6) {
+		scene->order_cap = mesh->tri_count * 6;
 		plat_free(scene->tmp_order_table1);
 		plat_free(scene->tmp_order_table2);
 		scene->tmp_order_table1 = plat_malloc(scene->order_cap * sizeof(scene->tmp_order_table1[0]));
@@ -332,24 +1167,54 @@ static void draw_mesh_instance(Scene* scene, uint8_t* buffer, int rowstride, con
 		}
 	}
 
-	// transform points
+	// Transform AND project, one pass per vertex.
 	//
-	// Model and view are folded into one transform per instance, so each vertex
-	// costs one matrix-vector product instead of two.
+	// Model and view are folded into one transform per instance, and the
+	// packed format's dequantisation (q * scale + bbox_min) is folded into
+	// that too: scaling the three axes by the quantisation steps and moving
+	// the origin to bbox_min's image makes the integer lattice coordinates the
+	// transform's input directly. Per vertex that is three int-to-float
+	// conversions and one matrix-vector product, then the divide.
+	//
+	// The view-space points are still kept: near-plane clipping needs them
+	// for the vertices behind the camera, which have no projection.
 	const xform mv = xform_multiply(&scene->view_xform, matrix);
+	const float k_min_z = k_near_z;
+	const float scene_scale = scene->scale;
+	const float proj_add_x = 1.6666666f * scene->centerx * scene_scale;
+	const float proj_add_y = scene->centery * scene_scale;
+	float3* restrict view_pts = scene->tmp_view_points;
+	uint8_t* restrict codes = scene->tmp_vert_codes;
+	// Straight from view space to the rasterizer's 28.4, offset included:
+	// ((x * scale / z + add) - 0.5) * 16 as one multiply-add per axis.
+	const float scale16 = scene_scale * 16.0f;
+	const float add16_x = (proj_add_x - 0.5f) * 16.0f;
+	const float add16_y = (proj_add_y - 0.5f) * 16.0f;
+	uint32_t* restrict fixp = scene->tmp_fix_points;
 	int frame = clamp_i(inst->frame, 0, mesh->vertex_frame_count - 1);
 	if ((mesh->flags & MeshFlag_FloatVertices) == 0)
 	{
 		// vertices in fixed point
 		const uint32_t* src_vtx = (const uint32_t*)mesh->vertices + frame * mesh->vertex_count;
-		const float3 bbox_min = mesh->bbox_min;
-		const float3 bbox_scale = v3_mul(v3_sub(mesh->bbox_max, mesh->bbox_min), f3(1.0f / 2047.0f, 1.0f / 1023.0f, 1.0f / 2047.0f));
+		const float3 q_step = v3_mul(v3_sub(mesh->bbox_max, mesh->bbox_min), f3(1.0f / 2047.0f, 1.0f / 1023.0f, 1.0f / 2047.0f));
+		xform mq;
+		mq.ax = v3_mulfl(mv.ax, q_step.x);
+		mq.ay = v3_mulfl(mv.ay, q_step.y);
+		mq.az = v3_mulfl(mv.az, q_step.z);
+		mq.pos = xform_transform_pt(&mv, mesh->bbox_min);
 		for (int i = 0; i < mesh->vertex_count; ++i)
 		{
 			const uint32_t v_bits = src_vtx[i];
-			float3 v_pos = { (float)(v_bits & 2047), (float)((v_bits >> 11) & 1023), (float)(v_bits >> 21) };
-			v_pos = v3_add(v3_mul(v_pos, bbox_scale), bbox_min);
-			scene->tmp_view_points[i] = xform_transform_pt(&mv, v_pos);
+			const float3 q = { (float)(v_bits & 2047), (float)((v_bits >> 11) & 1023), (float)(v_bits >> 21) };
+			const float3 p = xform_transform_pt(&mq, q);
+			view_pts[i] = p;
+			if (p.z >= k_min_z)
+			{
+				const float k = scale16 / p.z;
+				codes[i] = vert_fix(p.x * k + add16_x, p.y * k + add16_y, &fixp[i]);
+			}
+			else
+				codes[i] = VC_NEAR;
 		}
 	}
 	else
@@ -357,69 +1222,86 @@ static void draw_mesh_instance(Scene* scene, uint8_t* buffer, int rowstride, con
 		// vertices in floating point
 		const float3* src_vtx = (const float3*)mesh->vertices + frame * mesh->vertex_count;
 		for (int i = 0; i < mesh->vertex_count; ++i)
-			scene->tmp_view_points[i] = xform_transform_pt(&mv, src_vtx[i]);
-	}
-
-	// project points to screen
-	const float k_min_z = 0.015f;
-	const float scene_scale = scene->scale;
-	const float proj_add_x = 1.6666666f * scene->centerx * scene_scale;
-	const float proj_add_y = scene->centery * scene_scale;
-	for (int i = 0; i < mesh->vertex_count; ++i)
-	{
-		const float3* p = &scene->tmp_view_points[i];
-		float3* pp = &scene->tmp_proj_points[i];
-		const float pz = p->z;
-		if (pz >= k_min_z)
 		{
-			const float inv_z = scene_scale / pz;
-			pp->x = p->x * inv_z + proj_add_x;
-			pp->y = p->y * inv_z + proj_add_y;
+			const float3 p = xform_transform_pt(&mv, src_vtx[i]);
+			view_pts[i] = p;
+			if (p.z >= k_min_z)
+			{
+				const float k = scale16 / p.z;
+				codes[i] = vert_fix(p.x * k + add16_x, p.y * k + add16_y, &fixp[i]);
+			}
+			else
+				codes[i] = VC_NEAR;
 		}
-		pp->z = pz;
 	}
 
 	// backface / z / screen bounds cull triangles
 	int vis_tri_count = 0;
+	scene->clip_count = 0;
 	const uint16_t *ibPtr = mesh->tris;
 	for (int i = 0; i < mesh->tri_count; ++i, ibPtr += 3)
 	{
 		uint16_t idx0 = ibPtr[0];
 		uint16_t idx1 = ibPtr[1];
 		uint16_t idx2 = ibPtr[2];
-		const float3 p0 = scene->tmp_proj_points[idx0];
-		const float3 p1 = scene->tmp_proj_points[idx1];
-		const float3 p2 = scene->tmp_proj_points[idx2];
+		const unsigned c0 = codes[idx0], c1 = codes[idx1], c2 = codes[idx2];
+		const unsigned c_any = c0 | c1 | c2;
 
-		// If any vertex is behind the camera, skip it
-		const int any_non_pos = (p0.z < k_min_z) | (p1.z < k_min_z) | (p2.z < k_min_z);
-		if (any_non_pos)
+		// Straddling the near plane: clip to it rather than dropping the
+		// triangle. Cannot be tested or projected first -- the projection of a
+		// vertex behind the eye is meaningless, and its sign is wrong, so the
+		// backface test would give a random answer. The clipped pieces get
+		// their own tests inside.
+		if (c_any & VC_NEAR)
+		{
+			if (!(c0 & c1 & c2 & VC_NEAR))
+				vis_tri_count += clip_triangle_near(
+					scene, mesh, (uint16_t)i, idx0, idx1, idx2,
+					scene_scale, proj_add_x, proj_add_y,
+					use_silhouette, vis_tri_count);
+			continue;
+		}
+
+		// quick bounds check: all three off the same edge of the screen
+		if (c0 & c1 & c2 & VC_SCREEN)
 			continue;
 
-		// quick bounds check
-		float x1 = p0.x;
-		float y1 = p0.y;
-		float x2 = p1.x;
-		float y2 = p1.y;
-		float x3 = p2.x;
-		float y3 = p2.y;
-		if ((x1 < 0 && x2 < 0 && x3 < 0) ||
-			(x1 >= SCREEN_X && x2 >= SCREEN_X && x3 >= SCREEN_X) ||
-			(y1 < 0 && y2 < 0 && y3 < 0) ||
-			(y1 >= SCREEN_Y && y2 >= SCREEN_Y && y3 >= SCREEN_Y))
+		// Near the camera enough to be outside the guard band: the float
+		// facing test and then the clipper, as before. See Clipping above.
+		// Three quarters of a lap never takes this branch.
+		if (c_any & VC_GUARD)
+		{
+			const float3 p0 = project_pt(view_pts[idx0], scene_scale, proj_add_x, proj_add_y);
+			const float3 p1 = project_pt(view_pts[idx1], scene_scale, proj_add_x, proj_add_y);
+			const float3 p2 = project_pt(view_pts[idx2], scene_scale, proj_add_x, proj_add_y);
+			const float d = (p1.x - p0.x) * (p2.y - p0.y)
+			              - (p1.y - p0.y) * (p2.x - p0.x);
+			if (d <= 0)
+				continue;
+			const float3 poly[3] = { p0, p1, p2 };
+			const float z = sort_depth(scene, mesh, i, idx0, idx1, idx2);
+			vis_tri_count += emit_clipped_poly(scene, mesh, (uint16_t)i, poly, 3,
+			                                   z, use_silhouette, vis_tri_count);
 			continue;
+		}
 
-		// only render front side of faces via winding order
-		float dx21 = x2 - x1;
-		float dy31 = y3 - y1;
-		float dx31 = x3 - x1;
-		float dy21 = y2 - y1;
-		float d = dx21 * dy31 - dy21 * dx31;
-		if (d <= 0)
-			continue;
+		// ONLY THE FRONT SIDE, by winding -- on the 28.4 points the fill will
+		// draw, in integers. Every corner is inside the guard band here, so
+		// a difference is under 23,000 and each product under 2^30: exact,
+		// and no float is loaded or compared. It is also the winding the fill
+		// assumes when it decides which side the middle vertex is on, so the
+		// two can no longer disagree about a sliver.
+		{
+			const uint32_t f0 = fixp[idx0], f1 = fixp[idx1], f2 = fixp[idx2];
+			const int32_t x0 = fix_x(f0), y0 = fix_y(f0);
+			const int32_t d = (fix_x(f1) - x0) * (fix_y(f2) - y0)
+			                - (fix_y(f1) - y0) * (fix_x(f2) - x0);
+			if (d <= 0)
+				continue;
+		}
 
 		// compute face depth midpoints
-		float z = -(scene->tmp_view_points[idx0].z + scene->tmp_view_points[idx1].z + scene->tmp_view_points[idx2].z);
+		float z = sort_depth(scene, mesh, i, idx0, idx1, idx2);
 		scene->tmp_order_table1[vis_tri_count] = pack_depth_index(z, i);
 
 		// mark triangle as visible if we're rendering with silhouette edges
@@ -429,34 +1311,83 @@ static void draw_mesh_instance(Scene* scene, uint8_t* buffer, int rowstride, con
 	}
 	scene->stats_visible_tris += vis_tri_count;
 
-	// sort faces by z
-	radixsort_upper16keys(scene->tmp_order_table1, scene->tmp_order_table2, vis_tri_count);
-	const uint32_t* sorted_order = scene->tmp_order_table1;
+	// No sort here any more. These triangles go into the scene-wide buffer
+	// with the keys they already have, and scene_draw sorts the lot at once --
+	// see SceneTri in render.h for why. The entries below are written in
+	// whatever order the cull loop produced them, which is the mesh's own
+	// order; that matters, because radixsort_upper16keys is stable and a
+	// sort-proxy decal relies on staying after its host on a tie.
+	if (scene->scene_tri_cap < scene->scene_tri_count + vis_tri_count)
+	{
+		// realloc, not free-and-malloc: instances earlier in this frame have
+		// already written entries AND their keys, and both have to survive a
+		// growth in the middle of the frame. tmp_scene_order2 is the radix
+		// sort's scratch half and holds nothing between calls.
+		int cap = scene->scene_tri_count + vis_tri_count + 1024;
+		scene->tmp_scene_tris = plat_realloc(scene->tmp_scene_tris, cap * sizeof(scene->tmp_scene_tris[0]));
+		scene->tmp_scene_order1 = plat_realloc(scene->tmp_scene_order1, cap * sizeof(scene->tmp_scene_order1[0]));
+		plat_free(scene->tmp_scene_order2);
+		scene->tmp_scene_order2 = plat_malloc(cap * sizeof(scene->tmp_scene_order2[0]));
+		scene->scene_tri_cap = cap;
+	}
 
-	// draw faces
+	// resolve faces
 	const bool use_lighting = (inst->flags & (MeshDrawFlag_Solid | MeshDrawFlag_Lighting)) == (MeshDrawFlag_Solid | MeshDrawFlag_Lighting);
+
+	// The light, in the mesh's own space, so each lit triangle is one dot
+	// product with its stored normal. See mesh_face_normals for why this is
+	// the same number the view-space normal gave, and light_in_model for the
+	// transform.
+	const float3* normals = use_lighting ? mesh_face_normals(mesh) : NULL;
+	const float3 light_m = normals ? light_in_model(&mv, scene->light) : f3(0, 0, 0);
+	const bool bluenoise = (scene->tmp_draw_flags & SceneDrawFlag_DitherBluenoise) != 0;
+	const uint8_t* shades = face_shades(mesh, inst, normals, light_m, use_lighting, bluenoise);
 	for (int i = 0; i < vis_tri_count; ++i)
 	{
-		uint16_t fi = sorted_order[i] & 0xFFFF;
+		// The index half of a key is 16 bits, so the queue cannot hold more
+		// than 65536 triangles in a frame. Nothing here comes close -- a busy
+		// frame on Acropolis survives about 900 -- but the bound is the
+		// allocation's and the index's, so it is checked rather than assumed.
+		if (scene->scene_tri_count >= 0xFFFF)
+			break;
+		const uint32_t key = scene->tmp_order_table1[i];
+		uint16_t fi = key & 0xFFFF;
+
+		// An index past the end of the mesh is a piece of a triangle that was
+		// clipped against the near plane: its geometry is in the clip scratch,
+		// everything else still comes from the triangle it was cut from.
+		const bool clipped = (fi >= mesh->tri_count);
+		const float3* geom = NULL;
+		if (clipped)
+		{
+			const int c = fi - mesh->tri_count;
+			geom = &scene->tmp_clip_pts[c * 3];
+			fi = scene->tmp_clip_src[c];
+		}
+
 		uint16_t idx0 = mesh->tris[fi * 3 + 0];
 		uint16_t idx1 = mesh->tris[fi * 3 + 1];
 		uint16_t idx2 = mesh->tris[fi * 3 + 2];
 
-		float brightness = inst->color;
-		if (use_lighting)
+		uint8_t shade;
+		if (shades)
+			shade = shades[fi];
+		else
 		{
-			float3 normal = v3_tri_normal(&scene->tmp_view_points[idx0], &scene->tmp_view_points[idx2], &scene->tmp_view_points[idx1]);
-			// wrapped diffuse
-			float diff = v3_dot(normal, scene->light) * 0.5f + 0.5f;
-			brightness *= diff;
+			float brightness = inst->color;
+			if (normals)
+				brightness *= v3_dot(normals[fi], light_m) * 0.5f + 0.5f;   // wrapped diffuse
+			else if (use_lighting)
+			{
+				// A mesh with several vertex frames has no stored normals: its
+				// shape changes with the frame. Taken from the view-space points.
+				float3 normal = v3_tri_normal(&scene->tmp_view_points[idx0], &scene->tmp_view_points[idx2], &scene->tmp_view_points[idx1]);
+				brightness *= v3_dot(normal, scene->light) * 0.5f + 0.5f;
+			}
+			if (mesh->colors)
+				brightness *= mesh->colors[fi] * (1.0f / 255.0f);
+			shade = shade_of(brightness, bluenoise);
 		}
-		if (mesh->colors)
-		{
-			brightness *= mesh->colors[fi] * (1.0f / 255.0f);
-		}
-
-		//@TODO: cheap gamma adjust?
-		//brightness = brightness * brightness;
 
 		uint8_t wire_flag = 0xFF;
 		if (inst->flags & MeshDrawFlag_SilhouetteWire)
@@ -476,7 +1407,44 @@ static void draw_mesh_instance(Scene* scene, uint8_t* buffer, int rowstride, con
 			if (mesh->wire_flags)
 				wire_flag = mesh->wire_flags[fi];
 		}
-		draw_triangle(buffer, rowstride, &scene->tmp_proj_points[idx0], &scene->tmp_proj_points[idx2], &scene->tmp_proj_points[idx1], brightness, inst->flags, wire_flag, scene_draw_flags);
+		// The unclipped case swaps 1 and 2; the clipped one does not, because
+		// clip_triangle_near already emitted its vertices in mesh order and
+		// tested them with the same rule the fast path uses. The swap is done
+		// HERE rather than at the draw call, so a queued entry is three points
+		// and needs no further interpretation.
+		const int g = scene->scene_tri_count++;
+		SceneTri* out = &scene->tmp_scene_tris[g];
+		if (clipped)
+		{
+			// Into the rasterizer's own format: 28.4 fixed point with the
+			// half-pixel centre offset taken off, exactly the conversion
+			// tri_edge_init makes (FloatToFixed28_4(v - 0.5f)).
+			const float3* q0 = &geom[0];
+			const float3* q1 = &geom[2];
+			const float3* q2 = &geom[1];
+			out->x[0] = (int16_t)(int32_t)((q0->x - 0.5f) * 16.0f);
+			out->y[0] = (int16_t)(int32_t)((q0->y - 0.5f) * 16.0f);
+			out->x[1] = (int16_t)(int32_t)((q1->x - 0.5f) * 16.0f);
+			out->y[1] = (int16_t)(int32_t)((q1->y - 0.5f) * 16.0f);
+			out->x[2] = (int16_t)(int32_t)((q2->x - 0.5f) * 16.0f);
+			out->y[2] = (int16_t)(int32_t)((q2->y - 0.5f) * 16.0f);
+		}
+		else
+		{
+			// Already converted, once per vertex, by vert_fix.
+			const uint32_t f0 = fixp[idx0], f1 = fixp[idx2], f2 = fixp[idx1];
+			out->x[0] = (int16_t)fix_x(f0); out->y[0] = (int16_t)fix_y(f0);
+			out->x[1] = (int16_t)fix_x(f1); out->y[1] = (int16_t)fix_y(f1);
+			out->x[2] = (int16_t)fix_x(f2); out->y[2] = (int16_t)fix_y(f2);
+		}
+		out->shade = shade;
+		out->flags = (uint16_t)inst->flags;
+		out->wire_flag = wire_flag;
+		// Keep the depth half of the key the cull loop computed and point the
+		// index half at this entry. The depth is already flipped into
+		// sortable form by pack_depth_index, so nothing is recomputed and
+		// nothing is lost.
+		scene->tmp_scene_order1[g] = (key & 0xFFFF0000u) | (uint32_t)g;
 	}
 }
 
@@ -508,29 +1476,34 @@ void scene_add_line(Scene* scene, float3 a, float3 b)
 
 void scene_draw(Scene* scene, uint8_t* buffer, int rowstride, enum SceneDrawFlags draw_flags)
 {
+	fx_init_patterns();
 	scene->stats_visible_tris = 0;
+	scene->scene_tri_count = 0;
+	// The fill is chosen per scene_draw, and a queued triangle's shade is in
+	// the fill's own units -- see SceneTri -- so collection needs to know it.
+	scene->tmp_draw_flags = draw_flags;
 
-	// sort objects by distance
-	const MeshInstance** inst = scene->instances;
-	int valid_inst_count = 0;
-	for (int i = 0; i < scene->inst_count; ++i, ++inst)
+	// Collect every instance's triangles. No ordering here: instances are
+	// visited in submission order and their triangles all land in one queue,
+	// because sorting instances against each other is the thing this stopped
+	// doing. An instance's sort_bias still applies: it is folded into every
+	// one of its triangles' depth keys instead (see sort_depth), so it means
+	// the same thing it always did without objects having to be the unit of
+	// ordering.
+	for (int i = 0; i < scene->inst_count; ++i)
 	{
-		const Mesh* mesh = (*inst)->mesh;
-		if (!mesh)
+		const MeshInstance* inst = scene->instances[i];
+		if (!inst->mesh)
 			continue;
-		float3 center_local = xform_transform_pt(&(*inst)->tr, mesh->center);
-		float3 center = xform_transform_pt(&scene->view_xform, center_local);
-		float z = center.z + (*inst)->sort_bias;
-		scene->tmp_inst_order_table1[valid_inst_count++] = pack_depth_index(-z, i);
+		collect_mesh_instance(scene, inst);
 	}
-	radixsort_upper16keys(scene->tmp_inst_order_table1, scene->tmp_inst_order_table2, valid_inst_count);
 
-	// draw meshes in the sorted order
-	for (int i = 0; i < valid_inst_count; ++i)
+	// One sort, then one drawing pass, back to front over the whole scene.
+	radixsort_upper16keys(scene->tmp_scene_order1, scene->tmp_scene_order2, scene->scene_tri_count);
+	for (int i = 0; i < scene->scene_tri_count; ++i)
 	{
-		uint16_t index = scene->tmp_inst_order_table1[i] & 0xFFFF;
-		const MeshInstance* inst = scene->instances[index];
-		draw_mesh_instance(scene, buffer, rowstride, inst, draw_flags);
+		const SceneTri* t = &scene->tmp_scene_tris[scene->tmp_scene_order1[i] & 0xFFFF];
+		draw_scene_tri(buffer, rowstride, t, draw_flags);
 	}
 
 	// draw loose lines
@@ -663,6 +1636,9 @@ void mesh_free(Mesh* mesh)
 	plat_free(mesh->colors);
 	plat_free(mesh->wire_flags);
 	plat_free(mesh->adjacency);
+	plat_free(mesh->sort_proxy);
+	plat_free(mesh->face_normals);
+	plat_free(mesh->face_shade);
 	plat_free(mesh);
 }
 
