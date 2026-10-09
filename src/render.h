@@ -65,6 +65,31 @@
 //      its own space, its instance colour or the fill changes. The course
 //      never moves relative to the sun, so lit costs what flat costs; the
 //      car, which turns every frame, keeps the per-face path.
+//
+// And a third pass, for the M7's 14-cycle divide and its small caches
+// (2026-10). The same arithmetic throughout; 15 to 18 are bit for bit, and 14
+// is the same sums, which -ffast-math lets GCC add up in a different order
+// than the old loop's (11 pixels in 300 frames of the test scene moved; the
+// order the old loop got was itself an accident of GCC's operand ranking,
+// and moves with the compiler version just the same):
+//
+//  14. The vertex loop is software-pipelined: the perspective divide for the
+//      next vertex is issued before the current one is converted, so the
+//      VDIV -- which holds the FPU for 5 of its 16 cycles -- runs while the
+//      other vertex's work carries on.
+//  15. View-space depth is kept apart from x,y (see tmp_view_z), so the cull
+//      loop's per-vertex reads are nine bytes instead of seventeen.
+//  16. The pattern fill draws both halves of a triangle in one call, from a
+//      triangle setup that is out of line and has its registers to itself;
+//      the row loop is specialised for the Playdate's 52-byte row, and has
+//      a copy without the screen clamps for triangles whose corners are all
+//      on screen across, where the clamps provably never bite.
+//  17. The blue-noise fill compares four noise bytes per step in one word
+//      instead of one pixel at a time.
+//  18. The cull loop queues each surviving triangle itself, while its
+//      indices and points are still in registers, instead of parking a key
+//      for a second loop to decode (not with silhouette wires, which need
+//      the whole mesh culled first).
 // ---------------------------------------------------------------------------
 
 enum MeshFlags {
@@ -186,7 +211,15 @@ typedef struct Scene
 	float scale;
 
 	int tmp_points_cap;
-	float3* tmp_view_points;
+	// Each vertex's view-space point, split: depth on its own and x,y beside
+	// it. The cull loop reads only the depth (for the sort key), so keeping
+	// it apart from x,y makes what that loop touches per vertex nine bytes --
+	// depth, 28.4 point, outcode -- instead of seventeen, which in the M7's
+	// 4 KB of data cache (half its 8 KB of L1) is the difference between a
+	// segment's vertices staying resident through the cull and not. x,y are only read by the rare paths:
+	// near-plane clipping, the guard band, and multi-frame lighting.
+	float*  tmp_view_z;
+	float2* tmp_view_xy;
 	// Each vertex's screen point in the rasterizer's 28.4 fixed point, the
 	// half-pixel offset taken off, x in the low half and y in the high --
 	// what a queued SceneTri stores. Worked out once per vertex rather than
