@@ -1464,37 +1464,50 @@ static void collect_mesh_instance(Scene* scene, const MeshInstance* inst)
 	const xform* matrix = &inst->tr;
 	const bool use_silhouette = inst->flags & MeshDrawFlag_SilhouetteWire;
 
-	// Conservative bounding-sphere reject against the view frustum, done BEFORE
-	// anything else: without it every vertex of an off-screen instance is still
-	// transformed and projected. All tests are in squared form, so no sqrt.
+	// Conservative reject against the view frustum, done BEFORE anything
+	// else: without it every vertex of an off-screen instance is still
+	// transformed and projected.
+	//
+	// Against the mesh's box rather than a sphere round it. A course segment
+	// is a long flat strip, and the sphere that holds one is as tall as the
+	// segment is long: where the course folds back on itself -- Acropolis'
+	// hairpin -- several segments a frame were inside the sphere test and
+	// outside the screen, and paid the whole vertex pass for no triangles.
+	// The box's extent along a plane's normal is the sum of its three
+	// half-edges' extents along it, so this is exact for the box (nothing
+	// with a corner on screen is ever dropped) and costs no more than the
+	// sphere did.
 	{
-		const float3 c = xform_transform_pt(&scene->view_xform, xform_transform_pt(matrix, mesh->center));
-		const float3 ext = v3_mulfl(v3_sub(mesh->bbox_max, mesh->bbox_min), 0.5f);
-		// instance transform may scale: use its largest axis, squared throughout
-		const float scl2 = max2f(max2f(v3_lensq(matrix->ax), v3_lensq(matrix->ay)), v3_lensq(matrix->az));
-		const float r2 = v3_lensq(ext) * scl2;
-		const float r = sqrtf(r2);
+		const xform* v = &scene->view_xform;
+		const float3 c = xform_transform_pt(v, xform_transform_pt(matrix, mesh->center));
+		const float3 e = v3_mulfl(v3_sub(mesh->bbox_max, mesh->bbox_min), 0.5f);
+#define VIEW_DIR(a) f3((a).x * v->ax.x + (a).y * v->ay.x + (a).z * v->az.x, \
+                       (a).x * v->ax.y + (a).y * v->ay.y + (a).z * v->az.y, \
+                       (a).x * v->ax.z + (a).y * v->ay.z + (a).z * v->az.z)
+		const float3 hx = v3_mulfl(VIEW_DIR(matrix->ax), e.x);
+		const float3 hy = v3_mulfl(VIEW_DIR(matrix->ay), e.y);
+		const float3 hz = v3_mulfl(VIEW_DIR(matrix->az), e.z);
+#undef VIEW_DIR
 
 		// entirely nearer than the near plane (matches k_min_z below)
-		if (c.z + r < 0.015f)
+		if (c.z + fabsf(hx.z) + fabsf(hy.z) + fabsf(hz.z) < 0.015f)
 			return;
 
 		const float S = scene->scale;
 		const float px = 1.6666666f * scene->centerx * S;
 		const float py = scene->centery * S;
-		// Each screen edge is a plane through the eye. A sphere is outside when
-		// it is on the wrong side by more than its radius.
-		float f, nz;
-		f = S * c.x + px * c.z;                       // left:  screen_x >= 0
-		if (f < 0.0f && f * f > r2 * (S * S + px * px)) return;
-		nz = px - (float)SCREEN_X;                    // right: screen_x < SCREEN_X
-		f = S * c.x + nz * c.z;
-		if (f > 0.0f && f * f > r2 * (S * S + nz * nz)) return;
-		f = S * c.y + py * c.z;                       // top
-		if (f < 0.0f && f * f > r2 * (S * S + py * py)) return;
-		nz = py - (float)SCREEN_Y;                    // bottom
-		f = S * c.y + nz * c.z;
-		if (f > 0.0f && f * f > r2 * (S * S + nz * nz)) return;
+		// Each screen edge is a plane through the eye, n . p = 0 with the
+		// inside positive. The box is outside when its centre is further out
+		// than the box reaches along n.
+#define OUTSIDE(nx, nz, comp) \
+		((nx) * c.comp + (nz) * c.z \
+		 < -(fabsf((nx) * hx.comp + (nz) * hx.z) + fabsf((nx) * hy.comp + (nz) * hy.z) \
+		     + fabsf((nx) * hz.comp + (nz) * hz.z)))
+		if (OUTSIDE(S, px, x)) return;                            // left:   screen_x >= 0
+		if (OUTSIDE(-S, (float)SCREEN_X - px, x)) return;         // right:  screen_x < SCREEN_X
+		if (OUTSIDE(S, py, y)) return;                            // top
+		if (OUTSIDE(-S, (float)SCREEN_Y - py, y)) return;         // bottom
+#undef OUTSIDE
 	}
 
 	scene->tmp_sort_bias = -3.0f * inst->sort_bias;
