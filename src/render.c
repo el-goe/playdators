@@ -1677,6 +1677,11 @@ static void collect_mesh_instance(Scene* scene, const MeshInstance* inst)
 #undef VTX_FINISH
 #undef VTX_PIN
 
+	// The occluder hook sees the transformed vertices before the cull uses
+	// them. See Scene.occluder_hook.
+	if (scene->occluder_hook && (inst->flags & MeshDrawFlag_Occluder))
+		scene->occluder_hook(scene, inst, scene->occluder_user);
+
 	// The shading inputs first: nothing in them depends on which triangles
 	// survive, and the cull loop below queues most triangles itself.
 	const bool use_lighting = (inst->flags & (MeshDrawFlag_Solid | MeshDrawFlag_Lighting)) == (MeshDrawFlag_Solid | MeshDrawFlag_Lighting);
@@ -1893,7 +1898,17 @@ void scene_add_line(Scene* scene, float3 a, float3 b)
 }
 
 
+_Static_assert((int)SceneVertex_Guard == (int)VC_GUARD && (int)SceneVertex_Near == (int)VC_NEAR,
+               "render.h's SceneVertexCodes are the instance pass's own outcode bits");
+
 void scene_draw(Scene* scene, uint8_t* buffer, int rowstride, enum SceneDrawFlags draw_flags)
+{
+	scene_draw_begin(scene, draw_flags);
+	scene_draw_collect(scene, 0);
+	scene_draw_finish(scene, buffer, rowstride);
+}
+
+void scene_draw_begin(Scene* scene, enum SceneDrawFlags draw_flags)
 {
 	fx_init_patterns();
 	scene->stats_visible_tris = 0;
@@ -1902,20 +1917,28 @@ void scene_draw(Scene* scene, uint8_t* buffer, int rowstride, enum SceneDrawFlag
 	// the fill's own units -- see SceneTri -- so collection needs to know it.
 	scene->tmp_draw_flags = draw_flags;
 
-	// Collect every instance's triangles. No ordering here: instances are
-	// visited in submission order and their triangles all land in one queue,
-	// because sorting instances against each other is the thing this stopped
-	// doing. An instance's sort_bias still applies: it is folded into every
-	// one of its triangles' depth keys instead (see sort_depth), so it means
-	// the same thing it always did without objects having to be the unit of
-	// ordering.
-	for (int i = 0; i < scene->inst_count; ++i)
+}
+
+// Collect every instance's triangles. No ordering here: instances are
+// visited in submission order and their triangles all land in one queue,
+// because sorting instances against each other is the thing this stopped
+// doing. An instance's sort_bias still applies: it is folded into every one
+// of its triangles' depth keys instead (see sort_depth), so it means the same
+// thing it always did without objects having to be the unit of ordering.
+void scene_draw_collect(Scene* scene, int first)
+{
+	for (int i = first < 0 ? 0 : first; i < scene->inst_count; ++i)
 	{
 		const MeshInstance* inst = scene->instances[i];
 		if (!inst->mesh)
 			continue;
 		collect_mesh_instance(scene, inst);
 	}
+}
+
+void scene_draw_finish(Scene* scene, uint8_t* buffer, int rowstride)
+{
+	const enum SceneDrawFlags draw_flags = scene->tmp_draw_flags;
 
 	// One sort, then one drawing pass, back to front over the whole scene.
 	radixsort_upper16keys(scene->tmp_scene_order1, scene->tmp_scene_order2, scene->scene_tri_count);

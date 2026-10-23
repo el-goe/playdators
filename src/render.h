@@ -116,7 +116,20 @@ enum MeshDrawFlags {
 	// with silhouette wires on.
 	MeshDrawFlag_SilhouetteWire = (1 << 3),
 
+	// Show this instance to the scene's occluder hook (Scene.occluder_hook)
+	// once its vertices are transformed. Changes nothing about how it draws.
+	MeshDrawFlag_Occluder = (1 << 4),
+
 	//@TODO: control for UV checker?
+};
+
+// What the occluder hook can read off a vertex's outcode (Scene.
+// tmp_vert_codes): a vertex with either bit has no screen point in
+// tmp_fix_points, only its view-space one; one with Near is behind the near
+// plane. The same bits as the instance pass's own VC_GUARD and VC_NEAR.
+enum SceneVertexCodes {
+	SceneVertex_Guard = (1 << 4),
+	SceneVertex_Near  = (1 << 5),
 };
 
 enum SceneDrawFlags {
@@ -296,6 +309,17 @@ typedef struct Scene
 	float3* line_buf;
 
 	int stats_visible_tris;
+
+	// THE OCCLUDER HOOK. Called once for every instance flagged
+	// MeshDrawFlag_Occluder that survives the frustum reject, straight after
+	// its vertices are transformed and projected and before its triangles
+	// are culled, with the per-vertex arrays above filled in for it: view
+	// space (tmp_view_xy, tmp_view_z), the 28.4 screen points
+	// (tmp_fix_points) and the outcodes (tmp_vert_codes, SceneVertex_*). It
+	// lets a caller ask what is in front of what using the transform the
+	// frame already paid for. NULL (as scene_init leaves it) calls nothing.
+	void (*occluder_hook)(const struct Scene* scene, const MeshInstance* inst, void* user);
+	void* occluder_user;
 } Scene;
 
 void scene_init(Scene* scene);
@@ -307,3 +331,12 @@ void scene_setCenter(Scene* scene, float x, float y);
 void scene_add_mesh(Scene* scene, const MeshInstance* inst);
 void scene_add_line(Scene* scene, float3 a, float3 b);
 void scene_draw(Scene* scene, uint8_t* buffer, int rowstride, enum SceneDrawFlags draw_flags);
+
+// scene_draw in three steps, for a caller that needs to add instances after
+// it has seen some collected (through the occluder hook, say): begin, then
+// collect the instances added since `first` -- as often as needed, adding
+// more in between -- then finish, which sorts all of it as one scene and
+// draws it. scene_draw is exactly begin, collect from 0, finish.
+void scene_draw_begin(Scene* scene, enum SceneDrawFlags draw_flags);
+void scene_draw_collect(Scene* scene, int first);
+void scene_draw_finish(Scene* scene, uint8_t* buffer, int rowstride);
